@@ -19,6 +19,7 @@ type CheckoutBody = {
   customer_name: string;
   customer_phone: string;
   customer_address?: string;
+  between_streets?: string;
   notes?: string;
   delivery_distance?: string;
   delivery_cost?: number;
@@ -29,7 +30,7 @@ type CheckoutBody = {
 export async function POST(request: NextRequest) {
   try {
     const body: CheckoutBody = await request.json();
-    const { customer_name, customer_phone, customer_address, notes, delivery_distance, delivery_cost, items, total_amount } = body;
+    const { customer_name, customer_phone, customer_address, between_streets, notes, delivery_distance, delivery_cost, items, total_amount } = body;
 
     console.log("Cash checkout request:", { customer_name, customer_phone, items_count: items.length, total_amount, delivery_cost });
 
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
         customer_name,
         customer_phone,
         customer_address,
+        between_streets,
         notes,
         delivery_distance,
         delivery_cost: delivery_cost || 0,

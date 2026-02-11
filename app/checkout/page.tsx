@@ -29,6 +29,7 @@ export default function CheckoutPage() {
     name: "",
     phone: "",
     address: "",
+    betweenStreets: "",
     notes: "",
     delivery_distance: "",
   });
@@ -52,6 +53,54 @@ export default function CheckoutPage() {
 
   const deliveryCost = getDeliveryCost();
   const totalWithDelivery = total + deliveryCost;
+
+  // Función auxiliar para generar mensaje de WhatsApp
+  const generateWhatsAppMessage = (orderNumber: number, paymentMethod: 'cash' | 'mercadopago') => {
+    const selectedRate = deliveryRates.find(r => r.value === formData.delivery_distance);
+    const paymentMethodText = paymentMethod === 'cash' ? 'EFECTIVO/TRANSFERENCIA' : 'MERCADO PAGO (PAGADO)';
+    const paymentIcon = paymentMethod === 'cash' ? '💵' : '💳';
+    
+    let message = `🍔 *NUEVO PEDIDO - ${paymentMethodText}*\n\n`;
+    message += `📋 *Pedido #${orderNumber}*\n\n`;
+    message += `👤 *Cliente:* ${formData.name}\n`;
+    message += `📞 *Telefono:* ${formData.phone}\n`;
+    
+    if (formData.address) {
+      message += `📍 *Direccion:* ${formData.address}\n`;
+    }
+    if (formData.betweenStreets) {
+      message += `🛣️ *Entre calles:* ${formData.betweenStreets}\n`;
+    }
+    
+    message += `🚚 *Distancia:* ${selectedRate?.label}\n`;
+    message += `\n*DETALLE DEL PEDIDO:*\n\n`;
+
+    items.forEach((item, idx) => {
+      message += `${idx + 1}. *${item.product.name}* x${item.quantity}\n`;
+      if (item.extras && item.extras.length > 0) {
+        message += `   Extras: ${item.extras.map(e => `${e.addon.name}${e.quantity > 1 ? ` x${e.quantity}` : ''}`).join(', ')}\n`;
+      }
+      message += `   Subtotal: ${formatPrice(item.totalPrice * item.quantity)}\n\n`;
+    });
+
+    if (formData.notes) {
+      message += `📝 *Notas:* ${formData.notes}\n\n`;
+    }
+
+    message += `💵 Subtotal productos: ${formatPrice(total)}\n`;
+    message += `🚚 Costo delivery: ${formatPrice(deliveryCost)}\n`;
+    message += `━━━━━━━━━━━━━━━━━━\n`;
+    message += `💰 *TOTAL: ${formatPrice(totalWithDelivery)}*\n`;
+    message += `${paymentIcon} *Metodo: ${paymentMethodText}*\n\n`;
+    
+    if (paymentMethod === 'cash') {
+      message += `✅ Pedido confirmado. Te contactaremos pronto!`;
+    } else {
+      message += `✅ PAGO YA REALIZADO - Pedido confirmado y pagado con Mercado Pago`;
+    }
+
+    return message;
+  };
 
   // Función para usar GPS del navegador
   const useMyLocation = async () => {
@@ -186,6 +235,7 @@ export default function CheckoutPage() {
             customer_name: formData.name,
             customer_phone: formData.phone,
             customer_address: formData.address,
+            between_streets: formData.betweenStreets,
             notes: formData.notes,
             delivery_distance: formData.delivery_distance,
             delivery_cost: deliveryCost,
@@ -210,45 +260,16 @@ export default function CheckoutPage() {
           throw new Error(data.error || "Error al crear el pedido");
         }
 
-        // Formatear mensaje para WhatsApp
-        const selectedRate = deliveryRates.find(r => r.value === formData.delivery_distance);
+        // Generar mensaje de WhatsApp
+        const message = generateWhatsAppMessage(data.order_number, 'cash');
         
-        let message = `🍔 *NUEVO PEDIDO - EFECTIVO/TRANSFERENCIA*\n\n`;
-        message += `📋 *Pedido #${data.order_number}*\n\n`;
-        message += `👤 *Cliente:* ${formData.name}\n`;
-        message += `📞 *Teléfono:* ${formData.phone}\n`;
-        if (formData.address) {
-          message += `📍 *Dirección:* ${formData.address}\n`;
-        }
-        message += `🚚 *Distancia:* ${selectedRate?.label}\n`;
-        message += `\n*DETALLE DEL PEDIDO:*\n\n`;
-
-        items.forEach((item, idx) => {
-          message += `${idx + 1}. *${item.product.name}* x${item.quantity}\n`;
-          if (item.extras && item.extras.length > 0) {
-            message += `   Extras: ${item.extras.map(e => `${e.addon.name}${e.quantity > 1 ? ` x${e.quantity}` : ''}`).join(', ')}\n`;
-          }
-          message += `   Subtotal: ${formatPrice(item.totalPrice * item.quantity)}\n\n`;
-        });
-
-        if (formData.notes) {
-          message += `📝 *Notas:* ${formData.notes}\n\n`;
-        }
-
-        message += `💵 Subtotal productos: ${formatPrice(total)}\n`;
-        message += `🚚 Costo delivery: ${formatPrice(deliveryCost)}\n`;
-        message += `━━━━━━━━━━━━━━━━━━\n`;
-        message += `💰 *TOTAL A PAGAR: ${formatPrice(totalWithDelivery)}*\n`;
-        message += `💳 *Método: Efectivo o Transferencia*\n\n`;
-        message += `✅ Pedido confirmado. Te contactaremos pronto!`;
-
         // Número de WhatsApp del negocio (CAMBIAR POR EL TUYO)
         const whatsappNumber = "5491112345678"; // TODO: Reemplazar con tu número
         const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
 
         // Limpiar carrito y redirigir a WhatsApp
         clearCart();
-        toast.success("¡Pedido creado! Redirigiendo a WhatsApp...");
+        toast.success("Pedido creado! Redirigiendo a WhatsApp...");
         
         // Pequeño delay para que se vea el toast
         setTimeout(() => {
@@ -268,6 +289,7 @@ export default function CheckoutPage() {
           customer_name: formData.name,
           customer_phone: formData.phone,
           customer_address: formData.address,
+          between_streets: formData.betweenStreets,
           notes: formData.notes,
           delivery_distance: formData.delivery_distance,
           delivery_cost: deliveryCost,
@@ -301,12 +323,32 @@ export default function CheckoutPage() {
         return;
       }
 
+      // Guardar datos para WhatsApp después del pago
+      localStorage.setItem('pending_whatsapp_order', JSON.stringify({
+        orderNumber: data.order_number,
+        customerName: formData.name,
+        customerPhone: formData.phone,
+        address: formData.address,
+        betweenStreets: formData.betweenStreets,
+        deliveryDistance: formData.delivery_distance,
+        notes: formData.notes,
+        items: items.map(item => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          totalPrice: item.totalPrice,
+          extras: item.extras,
+        })),
+        total: total,
+        deliveryCost: deliveryCost,
+        totalWithDelivery: totalWithDelivery,
+      }));
+
       // Redirigir a Mercado Pago
       if (data.init_point) {
         clearCart();
         window.location.href = data.init_point;
       } else {
-        throw new Error("No se recibió el link de pago");
+        throw new Error("No se recibio el link de pago");
       }
     } catch (error) {
       console.error("Error:", error);
@@ -453,6 +495,22 @@ export default function CheckoutPage() {
                   
                   <p className="mt-2 text-xs text-zinc-500">
                     💡 Completa tu direccion primero, luego usa el GPS para calcular automaticamente (bloquea la seleccion manual)
+                  </p>
+                </div>
+
+                {/* Campo Entre Calles */}
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-zinc-300">
+                    Entre calles (opcional)
+                  </label>
+                  <Input
+                    value={formData.betweenStreets}
+                    onChange={(e) => setFormData({ ...formData, betweenStreets: e.target.value })}
+                    placeholder="Ej: Entre Av. Santa Fe y Av. Cordoba"
+                    className="border-zinc-700 bg-zinc-800 text-white"
+                  />
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Ayuda al repartidor a encontrar tu direccion mas facilmente
                   </p>
                 </div>
 

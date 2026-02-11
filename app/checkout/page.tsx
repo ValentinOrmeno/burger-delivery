@@ -473,7 +473,7 @@ export default function CheckoutPage() {
                       }
                     }}
                     required
-                    disabled={isCalculatingDistance || (distanceCalculated && distanceInfo?.distance_km && distanceInfo.distance_km > 0)}
+                    disabled={isCalculatingDistance || (distanceCalculated && !!distanceInfo?.distance_km && distanceInfo.distance_km > 0)}
                     className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-white disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-600"
                   >
                     <option value="">Selecciona tu distancia aproximada</option>

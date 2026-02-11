@@ -101,7 +101,7 @@ export default function CheckoutPage() {
     return message;
   };
 
-  // Función para usar GPS del navegador
+  // Funcion para usar GPS del navegador
   const useMyLocation = async () => {
     if (!formData.address || formData.address.trim().length < 5) {
       toast.error("Por favor ingresa tu direccion completa antes de usar el GPS");
@@ -111,14 +111,17 @@ export default function CheckoutPage() {
     setIsCalculatingDistance(true);
     setDistanceCalculated(false);
 
-    // Verificar si el navegador soporta geolocalización
+    // Verificar si el navegador soporta geolocalizacion
     if (!navigator.geolocation) {
-      toast.error("Tu navegador no soporta geolocalización");
+      toast.error("Tu navegador no soporta geolocalizacion. Usa el selector manual debajo.");
       setIsCalculatingDistance(false);
       return;
     }
 
-    // Pedir ubicación al usuario
+    // Mostrar mensaje de ayuda
+    toast.info("Esperando permisos de ubicacion... Si tu navegador pregunta, acepta el permiso.", { duration: 4000 });
+
+    // Pedir ubicacion al usuario
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
@@ -140,7 +143,7 @@ export default function CheckoutPage() {
           const data = await response.json();
 
           if (!data.success) {
-            toast.error(data.error || "No se pudo calcular la distancia");
+            toast.error(data.error || "No se pudo calcular la distancia. Usa el selector manual debajo.");
             setDistanceCalculated(false);
             setIsCalculatingDistance(false);
             return;
@@ -163,40 +166,40 @@ export default function CheckoutPage() {
           setIsCalculatingDistance(false);
           
           toast.success(
-            `📍 Ubicación detectada: ${data.distance_text} del local | Delivery: ${formatPrice(data.delivery_cost)}`,
+            `Ubicacion detectada: ${data.distance_text} del local | Delivery: ${formatPrice(data.delivery_cost)}`,
             { duration: 5000 }
           );
         } catch (error) {
           console.error("Error:", error);
-          toast.error("Error al calcular la distancia");
+          toast.error("Error al calcular la distancia. Podes usar el selector manual debajo.");
           setDistanceCalculated(false);
           setIsCalculatingDistance(false);
         }
       },
       (error) => {
-        console.error("Error de geolocalización:", error);
-        let errorMessage = "No se pudo obtener tu ubicación";
+        console.error("Error de geolocalizacion:", error);
+        let errorMessage = "No se pudo obtener tu ubicacion. ";
         
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            errorMessage = "Debes permitir el acceso a tu ubicación para calcular el delivery";
+            errorMessage += "Rechazaste el permiso de ubicacion. Podes usar el selector manual debajo o recargar la pagina y aceptar el permiso.";
             break;
           case error.POSITION_UNAVAILABLE:
-            errorMessage = "Tu ubicación no está disponible. Verificá que tengas el GPS activado";
+            errorMessage += "Tu ubicacion no esta disponible. Verifica que tengas el GPS activado o usa el selector manual debajo.";
             break;
           case error.TIMEOUT:
-            errorMessage = "Se agotó el tiempo esperando tu ubicación. Intentá de nuevo";
+            errorMessage += "El GPS tardo mucho en responder. Intenta de nuevo o usa el selector manual debajo.";
             break;
         }
         
-        toast.error(errorMessage);
+        toast.error(errorMessage, { duration: 6000 });
         setDistanceCalculated(false);
         setIsCalculatingDistance(false);
       },
       {
-        enableHighAccuracy: true, // Usar GPS de alta precisión
-        timeout: 10000, // 10 segundos
-        maximumAge: 0, // No usar ubicación en caché
+        enableHighAccuracy: false, // Cambiar a false para que sea mas rapido en moviles
+        timeout: 30000, // 30 segundos (mas tiempo para moviles)
+        maximumAge: 0, // No usar ubicacion en cache
       }
     );
   };
@@ -456,45 +459,21 @@ export default function CheckoutPage() {
                     className="border-zinc-700 bg-zinc-800 text-white"
                   />
                   
-                  {/* Botón para calcular con GPS */}
-                  <Button
-                    type="button"
-                    onClick={useMyLocation}
-                    disabled={isCalculatingDistance || !formData.address || formData.address.trim().length < 5}
-                    className="mt-3 w-full bg-blue-600 font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isCalculatingDistance ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Calculando distancia...
-                      </>
-                    ) : (
-                      <>
-                        <MapPin className="mr-2 h-4 w-4" />
-                        📍 Calcular con mi ubicacion GPS
-                      </>
-                    )}
-                  </Button>
-                  
                   {/* Info de distancia calculada */}
-                  {distanceCalculated && distanceInfo && (
+                  {distanceCalculated && distanceInfo && distanceInfo.distance_km > 0 && (
                     <div className="mt-3 rounded-lg border border-green-600 bg-green-600/10 p-4 text-sm">
                       <div className="flex items-center gap-2 text-green-400">
                         <MapPin className="h-5 w-5" />
                         <p className="font-bold text-base">
-                          ✓ Distancia: {distanceInfo.distance_text} del local
+                          Distancia: {distanceInfo.distance_text} del local
                         </p>
                       </div>
                       <div className="mt-2 flex items-center justify-between text-green-300">
-                        <p>⏱️ Tiempo estimado: {distanceInfo.duration_text}</p>
-                        <p className="font-bold">🚚 Delivery: {formatPrice(deliveryCost)}</p>
+                        <p>Tiempo estimado: {distanceInfo.duration_text}</p>
+                        <p className="font-bold">Delivery: {formatPrice(deliveryCost)}</p>
                       </div>
                     </div>
                   )}
-                  
-                  <p className="mt-2 text-xs text-zinc-500">
-                    💡 Completa tu direccion primero, luego usa el GPS para calcular automaticamente (bloquea la seleccion manual)
-                  </p>
                 </div>
 
                 {/* Campo Entre Calles */}
@@ -513,7 +492,7 @@ export default function CheckoutPage() {
                   </p>
                 </div>
 
-                {/* Selector MANUAL de distancia (alternativa al GPS) */}
+                {/* Selector MANUAL de distancia (siempre disponible) */}
                 <div>
                   <label className="mb-2 block text-sm font-medium text-zinc-300">
                     Distancia aproximada <span className="text-red-500">*</span>
@@ -535,7 +514,7 @@ export default function CheckoutPage() {
                       }
                     }}
                     required
-                    disabled={isCalculatingDistance || (distanceCalculated && !!distanceInfo?.distance_km && distanceInfo.distance_km > 0)}
+                    disabled={isCalculatingDistance}
                     className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-white disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-600"
                   >
                     <option value="">Selecciona tu distancia aproximada</option>
@@ -545,17 +524,42 @@ export default function CheckoutPage() {
                       </option>
                     ))}
                   </select>
-                  {/* Mostrar aviso cuando GPS bloqueó el campo manual */}
-                  {distanceCalculated && distanceInfo?.distance_km && distanceInfo.distance_km > 0 && (
-                    <p className="mt-2 text-xs text-green-500">
-                      🔒 Distancia calculada con GPS. No se puede modificar manualmente.
-                    </p>
-                  )}
-                  {deliveryCost > 0 && !distanceInfo?.distance_km && (
+                  {deliveryCost > 0 && (
                     <p className="mt-2 text-sm text-orange-500">
-                      🚚 Costo de delivery: {formatPrice(deliveryCost)}
+                      Costo de delivery: {formatPrice(deliveryCost)}
                     </p>
                   )}
+                  {distanceInfo?.distance_km && distanceInfo.distance_km > 0 && (
+                    <p className="mt-2 text-xs text-green-500">
+                      Calculado con GPS. Podes ajustarlo si es necesario.
+                    </p>
+                  )}
+                  
+                  {/* Boton GPS opcional */}
+                  <div className="mt-3">
+                    <Button
+                      type="button"
+                      onClick={useMyLocation}
+                      disabled={isCalculatingDistance || !formData.address || formData.address.trim().length < 5}
+                      variant="outline"
+                      className="w-full border-blue-600 text-blue-400 hover:bg-blue-600/10 disabled:opacity-50"
+                    >
+                      {isCalculatingDistance ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Calculando con GPS...
+                        </>
+                      ) : (
+                        <>
+                          <MapPin className="mr-2 h-4 w-4" />
+                          Calcular con GPS (opcional)
+                        </>
+                      )}
+                    </Button>
+                    <p className="mt-2 text-xs text-zinc-500">
+                      Si no sabes la distancia exacta, podes usar tu ubicacion GPS
+                    </p>
+                  </div>
                 </div>
 
                 <div>

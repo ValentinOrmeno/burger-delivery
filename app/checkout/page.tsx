@@ -55,8 +55,8 @@ export default function CheckoutPage() {
 
   // Función para usar GPS del navegador
   const useMyLocation = async () => {
-    if (!formData.address) {
-      toast.error("Por favor ingresá tu dirección primero para tener referencia");
+    if (!formData.address || formData.address.trim().length < 5) {
+      toast.error("Por favor ingresa tu direccion completa antes de usar el GPS");
       return;
     }
 
@@ -419,8 +419,8 @@ export default function CheckoutPage() {
                   <Button
                     type="button"
                     onClick={useMyLocation}
-                    disabled={isCalculatingDistance || !formData.address}
-                    className="mt-3 w-full bg-blue-600 font-semibold hover:bg-blue-700"
+                    disabled={isCalculatingDistance || !formData.address || formData.address.trim().length < 5}
+                    className="mt-3 w-full bg-blue-600 font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isCalculatingDistance ? (
                       <>
@@ -430,7 +430,7 @@ export default function CheckoutPage() {
                     ) : (
                       <>
                         <MapPin className="mr-2 h-4 w-4" />
-                        📍 Calcular con mi ubicación GPS
+                        📍 Calcular con mi ubicacion GPS
                       </>
                     )}
                   </Button>
@@ -452,7 +452,7 @@ export default function CheckoutPage() {
                   )}
                   
                   <p className="mt-2 text-xs text-zinc-500">
-                    💡 Usá el GPS para calcular automáticamente, o seleccioná tu distancia aproximada abajo
+                    💡 Completa tu direccion primero, luego usa el GPS para calcular automaticamente (bloquea la seleccion manual)
                   </p>
                 </div>
 
@@ -478,16 +478,22 @@ export default function CheckoutPage() {
                       }
                     }}
                     required
-                    disabled={isCalculatingDistance}
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-orange-600"
+                    disabled={isCalculatingDistance || (distanceCalculated && distanceInfo?.distance_km && distanceInfo.distance_km > 0)}
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-white disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-600"
                   >
-                    <option value="">Seleccioná tu distancia aproximada</option>
+                    <option value="">Selecciona tu distancia aproximada</option>
                     {deliveryRates.map((rate) => (
                       <option key={rate.value} value={rate.value}>
                         {rate.label} - {formatPrice(rate.cost)}
                       </option>
                     ))}
                   </select>
+                  {/* Mostrar aviso cuando GPS bloqueó el campo manual */}
+                  {distanceCalculated && distanceInfo?.distance_km && distanceInfo.distance_km > 0 && (
+                    <p className="mt-2 text-xs text-green-500">
+                      🔒 Distancia calculada con GPS. No se puede modificar manualmente.
+                    </p>
+                  )}
                   {deliveryCost > 0 && !distanceInfo?.distance_km && (
                     <p className="mt-2 text-sm text-orange-500">
                       🚚 Costo de delivery: {formatPrice(deliveryCost)}

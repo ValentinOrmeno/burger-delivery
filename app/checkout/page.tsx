@@ -54,25 +54,24 @@ export default function CheckoutPage() {
   const deliveryCost = getDeliveryCost();
   const totalWithDelivery = total + deliveryCost;
 
-  // Función auxiliar para generar mensaje de WhatsApp
+  // Funcion auxiliar para generar mensaje de WhatsApp
   const generateWhatsAppMessage = (orderNumber: number, paymentMethod: 'cash' | 'mercadopago') => {
     const selectedRate = deliveryRates.find(r => r.value === formData.delivery_distance);
     const paymentMethodText = paymentMethod === 'cash' ? 'EFECTIVO/TRANSFERENCIA' : 'MERCADO PAGO (PAGADO)';
-    const paymentIcon = paymentMethod === 'cash' ? '💵' : '💳';
     
-    let message = `🍔 *NUEVO PEDIDO - ${paymentMethodText}*\n\n`;
-    message += `📋 *Pedido #${orderNumber}*\n\n`;
-    message += `👤 *Cliente:* ${formData.name}\n`;
-    message += `📞 *Telefono:* ${formData.phone}\n`;
+    let message = `*NUEVO PEDIDO - ${paymentMethodText}*\n\n`;
+    message += `*Pedido #${orderNumber}*\n\n`;
+    message += `*Cliente:* ${formData.name}\n`;
+    message += `*Telefono:* ${formData.phone}\n`;
     
     if (formData.address) {
-      message += `📍 *Direccion:* ${formData.address}\n`;
+      message += `*Direccion:* ${formData.address}\n`;
     }
     if (formData.betweenStreets) {
-      message += `🛣️ *Entre calles:* ${formData.betweenStreets}\n`;
+      message += `*Entre calles:* ${formData.betweenStreets}\n`;
     }
     
-    message += `🚚 *Distancia:* ${selectedRate?.label}\n`;
+    message += `*Distancia:* ${selectedRate?.label}\n`;
     message += `\n*DETALLE DEL PEDIDO:*\n\n`;
 
     items.forEach((item, idx) => {
@@ -84,19 +83,19 @@ export default function CheckoutPage() {
     });
 
     if (formData.notes) {
-      message += `📝 *Notas:* ${formData.notes}\n\n`;
+      message += `*Notas:* ${formData.notes}\n\n`;
     }
 
-    message += `💵 Subtotal productos: ${formatPrice(total)}\n`;
-    message += `🚚 Costo delivery: ${formatPrice(deliveryCost)}\n`;
-    message += `━━━━━━━━━━━━━━━━━━\n`;
-    message += `💰 *TOTAL: ${formatPrice(totalWithDelivery)}*\n`;
-    message += `${paymentIcon} *Metodo: ${paymentMethodText}*\n\n`;
+    message += `Subtotal productos: ${formatPrice(total)}\n`;
+    message += `Costo delivery: ${formatPrice(deliveryCost)}\n`;
+    message += `---------------------------\n`;
+    message += `*TOTAL: ${formatPrice(totalWithDelivery)}*\n`;
+    message += `*Metodo: ${paymentMethodText}*\n\n`;
     
     if (paymentMethod === 'cash') {
-      message += `✅ Pedido confirmado. Te contactaremos pronto!`;
+      message += `Pedido confirmado. Te contactaremos pronto!`;
     } else {
-      message += `✅ PAGO YA REALIZADO - Pedido confirmado y pagado con Mercado Pago`;
+      message += `PAGO YA REALIZADO - Pedido confirmado y pagado con Mercado Pago`;
     }
 
     return message;
@@ -264,7 +263,7 @@ export default function CheckoutPage() {
         const message = generateWhatsAppMessage(data.order_number, 'cash');
         
         // Número de WhatsApp del negocio (CAMBIAR POR EL TUYO)
-        const whatsappNumber = "5491112345678"; // TODO: Reemplazar con tu número
+        const whatsappNumber = "5491168582586"; // Numero de WhatsApp configurado
         const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
 
         // Limpiar carrito y redirigir a WhatsApp

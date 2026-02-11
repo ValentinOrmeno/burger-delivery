@@ -22,16 +22,16 @@ function SuccessContent() {
         const orderData = JSON.parse(pendingOrderData);
         
         // Generar mensaje de WhatsApp
-        let message = `🍔 *NUEVO PEDIDO - MERCADO PAGO (PAGADO)*\n\n`;
-        message += `📋 *Pedido #${orderData.orderNumber}*\n\n`;
-        message += `👤 *Cliente:* ${orderData.customerName}\n`;
-        message += `📞 *Telefono:* ${orderData.customerPhone}\n`;
+        let message = `*NUEVO PEDIDO - MERCADO PAGO (PAGADO)*\n\n`;
+        message += `*Pedido #${orderData.orderNumber}*\n\n`;
+        message += `*Cliente:* ${orderData.customerName}\n`;
+        message += `*Telefono:* ${orderData.customerPhone}\n`;
         
         if (orderData.address) {
-          message += `📍 *Direccion:* ${orderData.address}\n`;
+          message += `*Direccion:* ${orderData.address}\n`;
         }
         if (orderData.betweenStreets) {
-          message += `🛣️ *Entre calles:* ${orderData.betweenStreets}\n`;
+          message += `*Entre calles:* ${orderData.betweenStreets}\n`;
         }
         
         // Agregar distancia (necesitamos buscar el label)
@@ -44,7 +44,7 @@ function SuccessContent() {
         ];
         const selectedRate = deliveryRates.find(r => r.value === orderData.deliveryDistance);
         if (selectedRate) {
-          message += `🚚 *Distancia:* ${selectedRate.label}\n`;
+          message += `*Distancia:* ${selectedRate.label}\n`;
         }
         
         message += `\n*DETALLE DEL PEDIDO:*\n\n`;
@@ -58,22 +58,22 @@ function SuccessContent() {
         });
 
         if (orderData.notes) {
-          message += `📝 *Notas:* ${orderData.notes}\n\n`;
+          message += `*Notas:* ${orderData.notes}\n\n`;
         }
 
-        message += `💵 Subtotal productos: ${formatPrice(orderData.total)}\n`;
-        message += `🚚 Costo delivery: ${formatPrice(orderData.deliveryCost)}\n`;
-        message += `━━━━━━━━━━━━━━━━━━\n`;
-        message += `💰 *TOTAL: ${formatPrice(orderData.totalWithDelivery)}*\n`;
-        message += `💳 *Metodo: MERCADO PAGO (PAGADO)*\n\n`;
-        message += `✅ PAGO YA REALIZADO - Pedido confirmado y pagado con Mercado Pago`;
+        message += `Subtotal productos: ${formatPrice(orderData.total)}\n`;
+        message += `Costo delivery: ${formatPrice(orderData.deliveryCost)}\n`;
+        message += `---------------------------\n`;
+        message += `*TOTAL: ${formatPrice(orderData.totalWithDelivery)}*\n`;
+        message += `*Metodo: MERCADO PAGO (PAGADO)*\n\n`;
+        message += `PAGO YA REALIZADO - Pedido confirmado y pagado con Mercado Pago`;
 
         // Limpiar localStorage
         localStorage.removeItem('pending_whatsapp_order');
 
-        // Redirigir a WhatsApp después de 2 segundos
+        // Redirigir a WhatsApp despues de 2 segundos
         setTimeout(() => {
-          const whatsappNumber = "5491112345678"; // TODO: Reemplazar con tu número
+          const whatsappNumber = "5491168582586"; // Numero de WhatsApp configurado
           const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
           window.location.href = whatsappUrl;
         }, 2000);

@@ -161,6 +161,7 @@ export default function AdminDashboard() {
 
   const getNextStatus = (currentStatus: string): string | null => {
     const statusFlow: Record<string, string> = {
+      pending: "paid",
       paid: "preparing",
       preparing: "ready",
       ready: "delivered",
@@ -170,6 +171,7 @@ export default function AdminDashboard() {
 
   const getNextStatusLabel = (currentStatus: string): string => {
     const labels: Record<string, string> = {
+      pending: "Confirmar pago recibido",
       paid: "Empezar a cocinar",
       preparing: "Marcar como listo",
       ready: "Marcar como entregado",
@@ -189,7 +191,7 @@ export default function AdminDashboard() {
   }
 
   const activeOrders = orders.filter((o) => 
-    ["paid", "preparing", "ready"].includes(o.status)
+    ["pending", "paid", "preparing", "ready"].includes(o.status)
   );
 
   return (
@@ -203,6 +205,11 @@ export default function AdminDashboard() {
             </h1>
             <p className="text-zinc-400">
               {activeOrders.length} orden{activeOrders.length !== 1 ? "es" : ""} activa{activeOrders.length !== 1 ? "s" : ""}
+              {orders.filter(o => o.status === 'pending').length > 0 && (
+                <span className="ml-2 text-yellow-400">
+                  ({orders.filter(o => o.status === 'pending').length} pendiente{orders.filter(o => o.status === 'pending').length !== 1 ? 's' : ''} de pago)
+                </span>
+              )}
             </p>
           </div>
           <div className="flex gap-2">
@@ -232,8 +239,8 @@ export default function AdminDashboard() {
         </div>
 
         {/* Stats */}
-        <div className="mb-8 grid gap-6 md:grid-cols-3">
-          {["paid", "preparing", "ready"].map((status) => {
+        <div className="mb-8 grid gap-6 md:grid-cols-4">
+          {["pending", "paid", "preparing", "ready"].map((status) => {
             const count = orders.filter((o) => o.status === status).length;
             const config = statusConfig[status as keyof typeof statusConfig];
             const Icon = config.icon;
@@ -294,12 +301,12 @@ export default function AdminDashboard() {
                           )}
                           {/* Badge de método de pago */}
                           {order.payment_method === "cash" ? (
-                            <Badge className="bg-green-600 text-white">
-                              💵 Efectivo/Transferencia
+                            <Badge className={order.status === 'pending' ? "bg-yellow-600 text-white animate-pulse" : "bg-green-600 text-white"}>
+                              {order.status === 'pending' ? '⏳ Pendiente de pago' : 'Efectivo/Transferencia'}
                             </Badge>
                           ) : (
                             <Badge className="bg-blue-600 text-white">
-                              💳 Mercado Pago
+                              Mercado Pago
                             </Badge>
                           )}
                         </div>
@@ -337,13 +344,27 @@ export default function AdminDashboard() {
                         {order.customer_address && (
                           <div className="flex items-start gap-3">
                             <MapPin className="mt-0.5 h-5 w-5 text-orange-500" />
-                            <p className="text-sm text-zinc-300">{order.customer_address}</p>
+                            <div>
+                              <p className="text-sm text-zinc-300">{order.customer_address}</p>
+                              {order.between_streets && (
+                                <p className="mt-1 text-xs text-zinc-400">Entre: {order.between_streets}</p>
+                              )}
+                            </div>
                           </div>
                         )}
                         {order.notes && (
                           <div className="mt-3 rounded-lg border border-orange-600/40 bg-orange-600/10 p-3">
-                            <p className="text-sm font-semibold text-orange-300">💬 Nota:</p>
+                            <p className="text-sm font-semibold text-orange-300">Nota:</p>
                             <p className="mt-1 text-sm text-orange-200">{order.notes}</p>
+                          </div>
+                        )}
+                        {order.status === 'pending' && order.payment_method === 'cash' && (
+                          <div className="mt-3 rounded-lg border border-yellow-600/40 bg-yellow-600/10 p-3">
+                            <p className="text-sm font-semibold text-yellow-300">ATENCION - Pago pendiente</p>
+                            <p className="mt-1 text-sm text-yellow-200">
+                              Esperando confirmacion de pago en efectivo o transferencia. 
+                              Una vez recibido el pago, confirma haciendo click en el boton verde.
+                            </p>
                           </div>
                         )}
                       </div>
@@ -409,7 +430,7 @@ export default function AdminDashboard() {
                             </div>
                             <div className="flex items-center justify-between gap-4">
                               <p className="text-xs text-orange-300">
-                                🚚 Delivery{order.delivery_distance ? ` (${order.delivery_distance.replace('-', ' a ').replace(/(\d+)/g, '$1m')})` : ''}:
+                                Delivery{order.delivery_distance ? ` (${order.delivery_distance.replace('-', ' a ').replace(/(\d+)/g, '$1m')})` : ''}:
                               </p>
                               <p className="text-sm font-bold text-orange-400">
                                 {formatPrice(order.delivery_cost)}
@@ -434,9 +455,14 @@ export default function AdminDashboard() {
                       {nextStatus && (
                         <Button
                           onClick={() => updateOrderStatus(order.id, nextStatus)}
-                          className="bg-orange-600 px-8 py-6 text-lg font-bold hover:bg-orange-700"
+                          className={`px-8 py-6 text-lg font-bold ${
+                            order.status === 'pending' && order.payment_method === 'cash'
+                              ? 'bg-green-600 hover:bg-green-700'
+                              : 'bg-orange-600 hover:bg-orange-700'
+                          }`}
                           size="lg"
                         >
+                          {order.status === 'pending' && order.payment_method === 'cash' ? '💰 ' : ''}
                           {getNextStatusLabel(order.status)}
                         </Button>
                       )}

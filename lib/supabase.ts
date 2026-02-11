@@ -44,6 +44,7 @@ export type Order = {
   customer_name: string;
   customer_phone: string;
   customer_address?: string;
+  between_streets?: string;
   delivery_distance?: string;
   delivery_cost?: number;
   payment_id?: string;

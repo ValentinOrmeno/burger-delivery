@@ -55,11 +55,6 @@ export default function CheckoutPage() {
 
   // Función para usar GPS del navegador
   const useMyLocation = async () => {
-    if (!formData.address || formData.address.trim().length < 5) {
-      toast.error("Por favor ingresa tu direccion completa antes de usar el GPS");
-      return;
-    }
-
     setIsCalculatingDistance(true);
     setDistanceCalculated(false);
 
@@ -419,7 +414,7 @@ export default function CheckoutPage() {
                   <Button
                     type="button"
                     onClick={useMyLocation}
-                    disabled={isCalculatingDistance || !formData.address || formData.address.trim().length < 5}
+                    disabled={isCalculatingDistance}
                     className="mt-3 w-full bg-blue-600 font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isCalculatingDistance ? (
@@ -452,7 +447,7 @@ export default function CheckoutPage() {
                   )}
                   
                   <p className="mt-2 text-xs text-zinc-500">
-                    💡 Completa tu direccion primero, luego usa el GPS para calcular automaticamente (bloquea la seleccion manual)
+                    💡 Usa el GPS para calcular automaticamente (bloquea la seleccion manual para evitar fraudes)
                   </p>
                 </div>
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CreditCard, Banknote, MessageCircle, MapPin, Loader2 } from "lucide-react";
+import { ArrowLeft, CreditCard, Banknote, MessageCircle, MapPin, Loader2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,11 +15,13 @@ type PaymentMethod = "cash" | "mercadopago";
 
 export default function CheckoutPage() {
   const router = useRouter();
-  const { items, getTotal, clearCart } = useCartStore();
+  const { items, getTotal, getEffectiveUnitPrice, clearCart } = useCartStore();
   const [isLoading, setIsLoading] = useState(false);
   const [isCalculatingDistance, setIsCalculatingDistance] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("mercadopago");
   const [distanceCalculated, setDistanceCalculated] = useState(false);
+  const promoContext = { paymentMethod, orderType: 'delivery' as const };
+  const total = getTotal(promoContext);
   const [distanceInfo, setDistanceInfo] = useState<{
     distance_km: number;
     distance_text: string;
@@ -29,11 +31,11 @@ export default function CheckoutPage() {
     name: "",
     phone: "",
     address: "",
+    floor: "",
     betweenStreets: "",
     notes: "",
     delivery_distance: "",
   });
-
   // Tarifas de delivery según distancia
   const deliveryRates = [
     { label: "Hasta 950 m", value: "0-950", cost: 600 },
@@ -42,8 +44,6 @@ export default function CheckoutPage() {
     { label: "De 2,5 km a 3,4 km", value: "2500-3400", cost: 2000 },
     { label: "De 3,5 km a 4 km", value: "3500-4000", cost: 2300 },
   ];
-
-  const total = getTotal();
 
   const getDeliveryCost = () => {
     if (!formData.delivery_distance) return 0;
@@ -54,18 +54,21 @@ export default function CheckoutPage() {
   const deliveryCost = getDeliveryCost();
   const totalWithDelivery = total + deliveryCost;
 
-  // Funcion auxiliar para generar mensaje de WhatsApp
-  const generateWhatsAppMessage = (orderNumber: number, paymentMethod: 'cash' | 'mercadopago') => {
+  // Direccion completa para enviar al backend (calle + numero + piso si hay)
+  const fullAddress = formData.address.trim() + (formData.floor.trim() ? `, ${formData.floor.trim()}` : "");
+
+  // Funcion auxiliar para generar mensaje de WhatsApp (usa precios con promo según método de pago)
+  const generateWhatsAppMessage = (orderNumber: number, pm: 'cash' | 'mercadopago', subtotalProducts: number, totalWithDel: number) => {
     const selectedRate = deliveryRates.find(r => r.value === formData.delivery_distance);
-    const paymentMethodText = paymentMethod === 'cash' ? 'EFECTIVO/TRANSFERENCIA' : 'MERCADO PAGO (PAGADO)';
+    const paymentMethodText = pm === 'cash' ? 'EFECTIVO/TRANSFERENCIA' : 'MERCADO PAGO (PAGADO)';
     
     let message = `*NUEVO PEDIDO - ${paymentMethodText}*\n\n`;
     message += `*Pedido #${orderNumber}*\n\n`;
     message += `*Cliente:* ${formData.name}\n`;
     message += `*Telefono:* ${formData.phone}\n`;
     
-    if (formData.address) {
-      message += `*Direccion:* ${formData.address}\n`;
+    if (fullAddress) {
+      message += `*Direccion:* ${fullAddress}\n`;
     }
     if (formData.betweenStreets) {
       message += `*Entre calles:* ${formData.betweenStreets}\n`;
@@ -74,22 +77,24 @@ export default function CheckoutPage() {
     message += `*Distancia:* ${selectedRate?.label}\n`;
     message += `\n*DETALLE DEL PEDIDO:*\n\n`;
 
+    const ctx = { paymentMethod: pm, orderType: 'delivery' as const };
     items.forEach((item, idx) => {
+      const unitPrice = getEffectiveUnitPrice(item.product, item.extras, ctx);
       message += `${idx + 1}. *${item.product.name}* x${item.quantity}\n`;
       if (item.extras && item.extras.length > 0) {
         message += `   Extras: ${item.extras.map(e => `${e.addon.name}${e.quantity > 1 ? ` x${e.quantity}` : ''}`).join(', ')}\n`;
       }
-      message += `   Subtotal: ${formatPrice(item.totalPrice * item.quantity)}\n\n`;
+      message += `   Subtotal: ${formatPrice(unitPrice * item.quantity)}\n\n`;
     });
 
     if (formData.notes) {
       message += `*Notas:* ${formData.notes}\n\n`;
     }
 
-    message += `Subtotal productos: ${formatPrice(total)}\n`;
+    message += `Subtotal productos: ${formatPrice(subtotalProducts)}\n`;
     message += `Costo delivery: ${formatPrice(deliveryCost)}\n`;
     message += `---------------------------\n`;
-    message += `*TOTAL: ${formatPrice(totalWithDelivery)}*\n`;
+    message += `*TOTAL: ${formatPrice(totalWithDel)}*\n`;
     message += `*Metodo: ${paymentMethodText}*\n\n`;
     
     if (paymentMethod === 'cash') {
@@ -217,6 +222,13 @@ export default function CheckoutPage() {
       return;
     }
 
+    const hasEntreCalles = formData.betweenStreets.trim().length > 0;
+    const hasNotas = formData.notes.trim().length > 0;
+    if (!hasEntreCalles && !hasNotas) {
+      toast.error("Completá 'Entre calles' o 'Notas / info al repartidor' para que el repartidor pueda encontrarte");
+      return;
+    }
+
     if (items.length === 0) {
       toast.error("Tu carrito está vacío");
       return;
@@ -236,7 +248,7 @@ export default function CheckoutPage() {
           body: JSON.stringify({
             customer_name: formData.name,
             customer_phone: formData.phone,
-            customer_address: formData.address,
+            customer_address: fullAddress,
             between_streets: formData.betweenStreets,
             notes: formData.notes,
             delivery_distance: formData.delivery_distance,
@@ -244,7 +256,7 @@ export default function CheckoutPage() {
             items: items.map((item) => ({
               product_id: item.product.id,
               quantity: item.quantity,
-              unit_price: item.totalPrice,
+              unit_price: getEffectiveUnitPrice(item.product, item.extras, { paymentMethod: 'cash', orderType: 'delivery' }),
               extras: item.extras.map((extra) => ({
                 addon_id: extra.addon.id,
                 name: extra.addon.name,
@@ -262,8 +274,8 @@ export default function CheckoutPage() {
           throw new Error(data.error || "Error al crear el pedido");
         }
 
-        // Generar mensaje de WhatsApp
-        const message = generateWhatsAppMessage(data.order_number, 'cash');
+        // Generar mensaje de WhatsApp (totales ya vienen con promo aplicada para efectivo) (totales ya vienen con promo aplicada para efectivo)
+        const message = generateWhatsAppMessage(data.order_number, 'cash', total, totalWithDelivery);
         
         // Número de WhatsApp del negocio (CAMBIAR POR EL TUYO)
         const whatsappNumber = "5491168582586"; // Numero de WhatsApp configurado
@@ -287,18 +299,18 @@ export default function CheckoutPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          customer_name: formData.name,
-          customer_phone: formData.phone,
-          customer_address: formData.address,
-          between_streets: formData.betweenStreets,
+          body: JSON.stringify({
+            customer_name: formData.name,
+            customer_phone: formData.phone,
+            customer_address: fullAddress,
+            between_streets: formData.betweenStreets,
           notes: formData.notes,
           delivery_distance: formData.delivery_distance,
           delivery_cost: deliveryCost,
           items: items.map((item) => ({
             product_id: item.product.id,
             quantity: item.quantity,
-            unit_price: item.totalPrice,
+            unit_price: getEffectiveUnitPrice(item.product, item.extras, { paymentMethod: 'mercadopago', orderType: 'delivery' }),
             extras: item.extras.map((extra) => ({
               addon_id: extra.addon.id,
               name: extra.addon.name,
@@ -441,56 +453,64 @@ export default function CheckoutPage() {
 
                 <div>
                   <label className="mb-2 block text-sm font-medium text-zinc-300">
-                    Dirección de entrega <span className="text-red-500">*</span>
+                    Calle y número <span className="text-red-500">*</span>
                   </label>
                   <Input
                     value={formData.address}
                     onChange={(e) => {
-                      setFormData({ ...formData, address: e.target.value });
-                      // Resetear cálculo si cambia la dirección
+                      const newAddress = e.target.value;
+                      setFormData((prev) => ({
+                        ...prev,
+                        address: newAddress,
+                        ...(distanceCalculated ? { delivery_distance: "" } : {}),
+                      }));
                       if (distanceCalculated) {
                         setDistanceCalculated(false);
                         setDistanceInfo(null);
-                        setFormData({ ...formData, address: e.target.value, delivery_distance: "" });
                       }
                     }}
-                    placeholder="Ej: Av. Corrientes 1234, Buenos Aires"
+                    placeholder="Ej: Av. Libertad 3325"
                     required
                     className="border-zinc-700 bg-zinc-800 text-white"
                   />
-                  
-                  {/* Info de distancia calculada */}
-                  {distanceCalculated && distanceInfo && distanceInfo.distance_km > 0 && (
-                    <div className="mt-3 rounded-lg border border-green-600 bg-green-600/10 p-4 text-sm">
-                      <div className="flex items-center gap-2 text-green-400">
-                        <MapPin className="h-5 w-5" />
-                        <p className="font-bold text-base">
-                          Distancia: {distanceInfo.distance_text} del local
-                        </p>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between text-green-300">
-                        <p>Tiempo estimado: {distanceInfo.duration_text}</p>
-                        <p className="font-bold">Delivery: {formatPrice(deliveryCost)}</p>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
-                {/* Campo Entre Calles */}
                 <div>
                   <label className="mb-2 block text-sm font-medium text-zinc-300">
-                    Entre calles (opcional)
+                    Piso / Depto / Unidad
+                  </label>
+                  <Input
+                    value={formData.floor}
+                    onChange={(e) => setFormData({ ...formData, floor: e.target.value })}
+                    placeholder="Opcional. Ej: 5to A"
+                    className="border-zinc-700 bg-zinc-800 text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-zinc-300">
+                    Entre calles / referencia de barrio <span className="text-red-500">*</span>
                   </label>
                   <Input
                     value={formData.betweenStreets}
                     onChange={(e) => setFormData({ ...formData, betweenStreets: e.target.value })}
-                    placeholder="Ej: Entre Av. Santa Fe y Av. Cordoba"
+                    placeholder="Ej: Parana y Uruguay. Ayuda al repartidor"
                     className="border-zinc-700 bg-zinc-800 text-white"
                   />
                   <p className="mt-1 text-xs text-zinc-500">
-                    Ayuda al repartidor a encontrar tu direccion mas facilmente
+                    Obligatorio: completá este campo o las notas para el repartidor.
                   </p>
                 </div>
+
+                {/* Aviso cuando aun no eligio distancia */}
+                {!formData.delivery_distance && formData.address.trim().length >= 5 && (
+                  <div className="rounded-lg border border-amber-600/50 bg-amber-600/10 p-4 text-sm text-amber-200">
+                    <p className="font-medium">¿No sabés la distancia exacta?</p>
+                    <p className="mt-1 text-amber-200/90">
+                      Usá el botón &quot;Calcular con GPS&quot; para que lo calculemos solos, o elegí abajo la opción que más se acerque a tu casa (ej. &quot;De 1 km a 1,4 km&quot;).
+                    </p>
+                  </div>
+                )}
 
                 {/* Selector MANUAL de distancia (siempre disponible) */}
                 <div>
@@ -534,47 +554,66 @@ export default function CheckoutPage() {
                       Calculado con GPS. Podes ajustarlo si es necesario.
                     </p>
                   )}
+
+                  {/* Info de distancia calculada */}
+                  {distanceCalculated && distanceInfo && (
+                    <div className="mt-3 rounded-lg border border-green-600 bg-green-600/10 p-4 text-sm">
+                      <div className="flex items-center gap-2 text-green-400">
+                        <MapPin className="h-5 w-5" />
+                        <p className="font-bold text-base">
+                          Distancia: {distanceInfo.distance_text} del local
+                        </p>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-green-300">
+                        <p>Tiempo estimado: {distanceInfo.duration_text}</p>
+                        <p className="font-bold">Delivery: {formatPrice(deliveryCost)}</p>
+                      </div>
+                    </div>
+                  )}
                   
-                  {/* Boton GPS opcional */}
+                  {/* Boton GPS - opcion principal cuando no sabe la distancia */}
                   <div className="mt-3">
                     <Button
                       type="button"
                       onClick={useMyLocation}
                       disabled={isCalculatingDistance || !formData.address || formData.address.trim().length < 5}
                       variant="outline"
-                      className="w-full border-blue-600 text-blue-400 hover:bg-blue-600/10 disabled:opacity-50"
+                      className="w-full border-blue-600 bg-blue-600/10 text-blue-300 hover:bg-blue-600/20 disabled:opacity-50"
                     >
                       {isCalculatingDistance ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Calculando con GPS...
+                          Calculando distancia...
                         </>
                       ) : (
                         <>
                           <MapPin className="mr-2 h-4 w-4" />
-                          Calcular con GPS (opcional)
+                          Calcular distancia con mi ubicación (GPS)
                         </>
                       )}
                     </Button>
                     <p className="mt-2 text-xs text-zinc-500">
-                      Si no sabes la distancia exacta, podes usar tu ubicacion GPS
+                      El navegador te pedirá permiso. Si no querés usar GPS, elegí la distancia aproximada en la lista de arriba.
                     </p>
                   </div>
                 </div>
 
                 <div>
                   <label className="mb-2 block text-sm font-medium text-zinc-300">
-                    Notas adicionales
+                    Notas / info al repartidor <span className="text-red-500">*</span>
                   </label>
                   <textarea
                     value={formData.notes}
                     onChange={(e) =>
                       setFormData({ ...formData, notes: e.target.value })
                     }
-                    placeholder="Sin cebolla, extra salsa, etc."
+                    placeholder="Ej: edificio blanco, timbre Martinez, sin cebolla, etc."
                     rows={3}
                     className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-orange-600"
                   />
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Obligatorio: completá este campo o entre calles para que el repartidor te encuentre.
+                  </p>
                 </div>
 
                 {/* Selector de método de pago */}
@@ -729,6 +768,10 @@ export default function CheckoutPage() {
                   <div className="flex items-center justify-between border-t border-zinc-700 pt-2 text-2xl font-bold">
                     <span className="text-zinc-300">Total:</span>
                     <span className="text-orange-500">{formatPrice(totalWithDelivery)}</span>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 text-sm text-zinc-400">
+                    <Clock className="h-4 w-4 shrink-0" />
+                    <span>Entrega estimada: 30-45 min</span>
                   </div>
                 </div>
               </CardContent>

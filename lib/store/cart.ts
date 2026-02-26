@@ -20,14 +20,20 @@ export type CartItem = {
   totalPrice: number; // Precio con extras incluidos
 };
 
+export type PromoContext = {
+  paymentMethod?: 'cash' | 'mercadopago';
+  orderType?: 'delivery' | 'pickup';
+};
+
 type CartStore = {
   items: CartItem[];
   addItem: (product: Product, quantity: number, extras: Extra[]) => void;
   removeItem: (itemId: string) => void;
   updateQuantity: (itemId: string, quantity: number) => void;
   clearCart: () => void;
-  getTotal: () => number;
+  getTotal: (context?: PromoContext) => number;
   getItemCount: () => number;
+  getEffectiveUnitPrice: (product: Product, extras: Extra[], context?: PromoContext) => number;
 };
 
 // Generar ID único para un item basado en producto y extras
@@ -39,13 +45,34 @@ const generateItemId = (product: Product, extras: Extra[]): string => {
   return `${product.id}-${extrasKey}`;
 };
 
-// Calcular precio total de un item
-const calculateItemPrice = (product: Product, extras: Extra[]): number => {
-  let total = product.price;
+// Aplica restricciones de promo: solo efectivo, solo retiro
+function shouldApplyPromo(product: Product, context?: PromoContext): boolean {
+  if (!product.promo_active || product.promo_price == null) return false;
+  if (!context) return true;
+  if (product.promo_only_cash && context.paymentMethod !== 'cash') return false;
+  if (product.promo_only_pickup && context.orderType !== 'pickup') return false;
+  return true;
+}
+
+// Calcular precio unitario (base + extras) con o sin contexto de pago/retiro
+export function getEffectiveUnitPrice(
+  product: Product,
+  extras: Extra[],
+  context?: PromoContext
+): number {
+  const basePrice = shouldApplyPromo(product, context)
+    ? (product.promo_price ?? product.price)
+    : product.price;
+  let total = basePrice;
   extras.forEach((extra) => {
     total += extra.addon.price * extra.quantity;
   });
   return total;
+}
+
+// Calcular precio total de un item (sin contexto: se usa al agregar al carrito)
+const calculateItemPrice = (product: Product, extras: Extra[]): number => {
+  return getEffectiveUnitPrice(product, extras);
 };
 
 export const useCartStore = create<CartStore>()(
@@ -106,13 +133,24 @@ export const useCartStore = create<CartStore>()(
         set({ items: [] });
       },
       
-      getTotal: () => {
-        return get().items.reduce(
+      getTotal: (context) => {
+        const items = get().items;
+        if (context) {
+          return items.reduce(
+            (total, item) =>
+              total +
+              getEffectiveUnitPrice(item.product, item.extras, context) * item.quantity,
+            0
+          );
+        }
+        return items.reduce(
           (total, item) => total + item.totalPrice * item.quantity,
           0
         );
       },
-      
+
+      getEffectiveUnitPrice,
+
       getItemCount: () => {
         return get().items.reduce((count, item) => count + item.quantity, 0);
       },

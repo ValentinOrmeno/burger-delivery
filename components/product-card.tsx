@@ -107,27 +107,41 @@ export function ProductCard({ product, isFeatured = false }: ProductCardProps) {
           )}
         </div>
 
-        <CardContent className="space-y-3 p-5">
-          {/* Nombre del producto - SIN line-clamp para mostrar completo */}
-          <div className="min-h-[3.5rem]">
-            <h3 className="text-xl font-black leading-tight text-white">
-              {product.name}
-            </h3>
-          </div>
+        <CardContent className="space-y-4 p-5">
+          {/* Nombre del producto - jerarquia principal */}
+          <h3 className={`font-black leading-tight text-white ${isFeatured ? "text-2xl" : "text-xl"}`}>
+            {product.name}
+          </h3>
 
-          {/* Descripción */}
-          <p className="min-h-[2.5rem] text-sm leading-relaxed text-zinc-400 line-clamp-2">
+          {/* Descripcion - secundaria, menos peso visual */}
+          <p className="text-sm leading-relaxed text-zinc-500 line-clamp-2">
             {product.description}
           </p>
 
-          {/* Precio destacado */}
-          <div className="flex items-center justify-between rounded-lg bg-orange-600/10 px-3 py-2">
-            <span className="text-sm font-semibold text-orange-400">
-              {isCustomizable ? 'Desde' : 'Precio'}
-            </span>
-            <span className="text-2xl font-black text-orange-500">
-              {formatPrice(product.price)}
-            </span>
+          {/* Precio - destacado, facil de leer */}
+          <div className="rounded-lg border border-orange-600/30 bg-orange-600/15 px-4 py-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wide text-orange-400">
+                {product.promo_active ? "Promo" : isCustomizable ? "Desde" : "Precio"}
+              </span>
+              <div className="text-right">
+                {product.promo_active && product.promo_price && (
+                  <span className="mr-2 text-sm font-medium text-zinc-500 line-through">
+                    {formatPrice(product.price)}
+                  </span>
+                )}
+                <span className="text-2xl font-black tabular-nums text-orange-400">
+                  {formatPrice(product.promo_active && product.promo_price ? product.promo_price : product.price)}
+                </span>
+              </div>
+            </div>
+            {(product.promo_active && (product.promo_only_cash || product.promo_only_pickup)) && (
+              <p className="mt-1.5 text-xs text-zinc-500">
+                {product.promo_only_cash && product.promo_only_pickup && "Válida solo efectivo y retiro en local"}
+                {product.promo_only_cash && !product.promo_only_pickup && "Válida solo en efectivo"}
+                {!product.promo_only_cash && product.promo_only_pickup && "Válida solo retiro en local"}
+              </p>
+            )}
           </div>
 
           {/* Botón de acción mejorado */}

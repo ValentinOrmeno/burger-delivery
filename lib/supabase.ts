@@ -1,19 +1,36 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables');
-}
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+function createSupabaseClient(): SupabaseClient {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error('Missing Supabase env: NEXT_PUBLIC_SUPABASE_URL y/o NEXT_PUBLIC_SUPABASE_ANON_KEY');
+    return createClient('https://placeholder.supabase.co', 'placeholder-key');
+  }
+  return createClient(supabaseUrl, supabaseAnonKey, {
   realtime: {
     params: {
       eventsPerSecond: 10,
     },
   },
 });
+}
+
+export const supabase = createSupabaseClient();
+
+/**
+ * Cliente con service_role para uso solo en API routes (server).
+ * Bypasea RLS; usar solo para operaciones de admin (ej. eliminar orden).
+ */
+export function getSupabaseAdmin(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    throw new Error('Faltan NEXT_PUBLIC_SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY');
+  }
+  return createClient(url, serviceKey);
+}
 
 // Tipos de base de datos
 export type Product = {
@@ -24,6 +41,10 @@ export type Product = {
   image_url: string;
   category: 'burger' | 'veggie' | 'bondiolita' | 'pancho' | 'sides' | 'dessert';
   is_available: boolean;
+  promo_price?: number | null;
+  promo_active?: boolean | null;
+  promo_only_pickup?: boolean | null;
+  promo_only_cash?: boolean | null;
   size_options?: {
     simple?: number;
     doble?: number;
@@ -50,6 +71,7 @@ export type Order = {
   payment_id?: string;
   payment_status?: string;
   payment_method?: 'cash' | 'mercadopago';
+  order_type?: 'delivery' | 'pickup';
   notes?: string;
 };
 

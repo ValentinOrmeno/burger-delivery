@@ -45,12 +45,13 @@ export async function GET(
       return NextResponse.json({ error: "Orden no encontrada" }, { status: 404 });
     }
 
-    const items = (order.order_items as Array<{
-      quantity: number;
-      unit_price: number;
-      products: { name: string } | null;
-      extras?: Array<{ name: string; quantity: number }>;
-    }>) ?? [];
+    const items =
+      ((order.order_items ?? []) as unknown as Array<{
+        quantity: number;
+        unit_price: number;
+        products: { name: string } | null;
+        extras?: Array<{ name: string; quantity: number }>;
+      }>) ?? [];
 
     const deliveryCost = order.delivery_cost ?? 0;
     const subtotal = order.total_amount - deliveryCost;

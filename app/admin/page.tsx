@@ -171,6 +171,11 @@ export default function AdminDashboard() {
   const [adminTab, setAdminTab] = useState<"orders" | "promos" | "metrics">("orders");
   const [kitchenMode, setKitchenMode] = useState(false);
 
+  const historialFilters: [label: string, value: string, setter: (v: string) => void][] = [
+    ["Desde", historialDesde, setHistorialDesde],
+    ["Hasta", historialHasta, setHistorialHasta],
+  ];
+
   // Nota interna por orden: { [orderId]: string }
   const [internalNotes, setInternalNotes] = useState<Record<string, string>>(() => {
     if (typeof window === "undefined") return {};
@@ -770,11 +775,15 @@ export default function AdminDashboard() {
               <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800/30 px-4 py-3">
                 <Calendar className="h-5 w-5 text-zinc-400" />
                 <span className="text-sm text-zinc-400">Historial:</span>
-                {[["Desde", historialDesde, setHistorialDesde], ["Hasta", historialHasta, setHistorialHasta]].map(([label, val, setter]) => (
-                  <label key={String(label)} className="flex items-center gap-2 text-sm">
+                {historialFilters.map(([label, val, setter]) => (
+                  <label key={label} className="flex items-center gap-2 text-sm">
                     <span className="text-zinc-500">{label}</span>
-                    <input type="date" value={String(val)} onChange={(e) => (setter as (v: string) => void)(e.target.value)}
-                      className="rounded border border-zinc-600 bg-zinc-800 px-2 py-1.5 text-white" />
+                    <input
+                      type="date"
+                      value={val}
+                      onChange={(e) => setter(e.target.value)}
+                      className="rounded border border-zinc-600 bg-zinc-800 px-2 py-1.5 text-white"
+                    />
                   </label>
                 ))}
                 <div className="ml-auto flex items-center gap-2">

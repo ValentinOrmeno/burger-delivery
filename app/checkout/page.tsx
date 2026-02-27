@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CreditCard, Banknote, MessageCircle, MapPin, Loader2, Clock } from "lucide-react";
+import { ArrowLeft, CreditCard, Banknote, MapPin, Loader2, Lock, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCartStore } from "@/lib/store/cart";
 import { formatPrice } from "@/lib/utils";
+import { DELIVERY_RATES, WHATSAPP_NUMBER, getDeliveryCost, getDeliveryLabel } from "@/lib/constants";
 import Image from "next/image";
 import { toast } from "sonner";
 
@@ -16,12 +17,11 @@ type PaymentMethod = "cash" | "mercadopago";
 export default function CheckoutPage() {
   const router = useRouter();
   const { items, getTotal, getEffectiveUnitPrice, clearCart } = useCartStore();
+
   const [isLoading, setIsLoading] = useState(false);
   const [isCalculatingDistance, setIsCalculatingDistance] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("mercadopago");
-  const [distanceCalculated, setDistanceCalculated] = useState(false);
-  const promoContext = { paymentMethod, orderType: 'delivery' as const };
-  const total = getTotal(promoContext);
+  const [gpsLocked, setGpsLocked] = useState(false);
   const [distanceInfo, setDistanceInfo] = useState<{
     distance_km: number;
     distance_text: string;
@@ -36,199 +36,130 @@ export default function CheckoutPage() {
     notes: "",
     delivery_distance: "",
   });
-  // Tarifas de delivery según distancia
-  const deliveryRates = [
-    { label: "Hasta 950 m", value: "0-950", cost: 600 },
-    { label: "De 1 km a 1,4 km", value: "1000-1400", cost: 1400 },
-    { label: "De 1,5 km a 2,4 km", value: "1500-2400", cost: 1700 },
-    { label: "De 2,5 km a 3,4 km", value: "2500-3400", cost: 2000 },
-    { label: "De 3,5 km a 4 km", value: "3500-4000", cost: 2300 },
-  ];
 
-  const getDeliveryCost = () => {
-    if (!formData.delivery_distance) return 0;
-    const rate = deliveryRates.find(r => r.value === formData.delivery_distance);
-    return rate ? rate.cost : 0;
-  };
-
-  const deliveryCost = getDeliveryCost();
+  const promoContext = { paymentMethod, orderType: "delivery" as const };
+  const total = getTotal(promoContext);
+  const deliveryCost = getDeliveryCost(formData.delivery_distance);
   const totalWithDelivery = total + deliveryCost;
+  const fullAddress =
+    formData.address.trim() + (formData.floor.trim() ? `, ${formData.floor.trim()}` : "");
 
-  // Direccion completa para enviar al backend (calle + numero + piso si hay)
-  const fullAddress = formData.address.trim() + (formData.floor.trim() ? `, ${formData.floor.trim()}` : "");
-
-  // Funcion auxiliar para generar mensaje de WhatsApp (usa precios con promo según método de pago)
-  const generateWhatsAppMessage = (orderNumber: number, pm: 'cash' | 'mercadopago', subtotalProducts: number, totalWithDel: number) => {
-    const selectedRate = deliveryRates.find(r => r.value === formData.delivery_distance);
-    const paymentMethodText = pm === 'cash' ? 'EFECTIVO/TRANSFERENCIA' : 'MERCADO PAGO (PAGADO)';
-    
-    let message = `*NUEVO PEDIDO - ${paymentMethodText}*\n\n`;
-    message += `*Pedido #${orderNumber}*\n\n`;
-    message += `*Cliente:* ${formData.name}\n`;
-    message += `*Telefono:* ${formData.phone}\n`;
-    
-    if (fullAddress) {
-      message += `*Direccion:* ${fullAddress}\n`;
-    }
-    if (formData.betweenStreets) {
-      message += `*Entre calles:* ${formData.betweenStreets}\n`;
-    }
-    
-    message += `*Distancia:* ${selectedRate?.label}\n`;
-    message += `\n*DETALLE DEL PEDIDO:*\n\n`;
-
-    const ctx = { paymentMethod: pm, orderType: 'delivery' as const };
-    items.forEach((item, idx) => {
-      const unitPrice = getEffectiveUnitPrice(item.product, item.extras, ctx);
-      message += `${idx + 1}. *${item.product.name}* x${item.quantity}\n`;
-      if (item.extras && item.extras.length > 0) {
-        message += `   Extras: ${item.extras.map(e => `${e.addon.name}${e.quantity > 1 ? ` x${e.quantity}` : ''}`).join(', ')}\n`;
+  const handleAddressChange = useCallback(
+    (newAddress: string) => {
+      setFormData((prev) => ({
+        ...prev,
+        address: newAddress,
+        ...(gpsLocked ? { delivery_distance: "" } : {}),
+      }));
+      if (gpsLocked) {
+        setGpsLocked(false);
+        setDistanceInfo(null);
       }
-      message += `   Subtotal: ${formatPrice(unitPrice * item.quantity)}\n\n`;
-    });
+    },
+    [gpsLocked]
+  );
 
-    if (formData.notes) {
-      message += `*Notas:* ${formData.notes}\n\n`;
-    }
-
-    message += `Subtotal productos: ${formatPrice(subtotalProducts)}\n`;
-    message += `Costo delivery: ${formatPrice(deliveryCost)}\n`;
-    message += `---------------------------\n`;
-    message += `*TOTAL: ${formatPrice(totalWithDel)}*\n`;
-    message += `*Metodo: ${paymentMethodText}*\n\n`;
-    
-    if (paymentMethod === 'cash') {
-      message += `Pedido confirmado. Te contactaremos pronto!`;
-    } else {
-      message += `PAGO YA REALIZADO - Pedido confirmado y pagado con Mercado Pago`;
-    }
-
-    return message;
-  };
-
-  // Funcion para usar GPS del navegador
-  const useMyLocation = async () => {
-    if (!formData.address || formData.address.trim().length < 5) {
-      toast.error("Por favor ingresa tu direccion completa antes de usar el GPS");
+  const useMyLocation = useCallback(async () => {
+    if (formData.address.trim().length < 5) {
+      toast.error("Ingresá tu dirección antes de usar el GPS");
       return;
     }
-
-    setIsCalculatingDistance(true);
-    setDistanceCalculated(false);
-
-    // Verificar si el navegador soporta geolocalizacion
     if (!navigator.geolocation) {
-      toast.error("Tu navegador no soporta geolocalizacion. Usa el selector manual debajo.");
-      setIsCalculatingDistance(false);
+      toast.error("Tu navegador no soporta geolocalización. Elegí la distancia manualmente.");
       return;
     }
+    setIsCalculatingDistance(true);
+    toast.info("Esperando permiso de ubicación…", { duration: 3000 });
 
-    // Mostrar mensaje de ayuda
-    toast.info("Esperando permisos de ubicacion... Si tu navegador pregunta, acepta el permiso.", { duration: 4000 });
-
-    // Pedir ubicacion al usuario
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        
-        console.log("GPS obtenido:", { latitude, longitude });
-
+      async ({ coords: { latitude, longitude } }) => {
         try {
-          const response = await fetch("/api/calculate-distance", {
+          const res = await fetch("/api/calculate-distance", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              latitude,
-              longitude,
-            }),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ latitude, longitude }),
           });
-
-          const data = await response.json();
-
+          const data = await res.json();
           if (!data.success) {
-            toast.error(data.error || "No se pudo calcular la distancia. Usa el selector manual debajo.");
-            setDistanceCalculated(false);
-            setIsCalculatingDistance(false);
+            toast.error(data.error ?? "No se pudo calcular la distancia. Elegí manualmente.");
             return;
           }
-
-          // Guardar info de distancia
           setDistanceInfo({
             distance_km: data.distance_km,
             distance_text: data.distance_text,
             duration_text: data.duration_text,
           });
-
-          // Auto-seleccionar el rango de delivery
-          setFormData({
-            ...formData,
-            delivery_distance: data.delivery_range,
-          });
-
-          setDistanceCalculated(true);
-          setIsCalculatingDistance(false);
-          
+          setFormData((prev) => ({ ...prev, delivery_distance: data.delivery_range }));
+          setGpsLocked(true);
           toast.success(
-            `Ubicacion detectada: ${data.distance_text} del local | Delivery: ${formatPrice(data.delivery_cost)}`,
+            `📍 ${data.distance_text} del local — Delivery: ${formatPrice(data.delivery_cost)}`,
             { duration: 5000 }
           );
-        } catch (error) {
-          console.error("Error:", error);
-          toast.error("Error al calcular la distancia. Podes usar el selector manual debajo.");
-          setDistanceCalculated(false);
+        } catch {
+          toast.error("Error al calcular. Elegí la distancia manualmente.");
+        } finally {
           setIsCalculatingDistance(false);
         }
       },
-      (error) => {
-        console.error("Error de geolocalizacion:", error);
-        let errorMessage = "No se pudo obtener tu ubicacion. ";
-        
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            errorMessage += "Rechazaste el permiso de ubicacion. Podes usar el selector manual debajo o recargar la pagina y aceptar el permiso.";
-            break;
-          case error.POSITION_UNAVAILABLE:
-            errorMessage += "Tu ubicacion no esta disponible. Verifica que tengas el GPS activado o usa el selector manual debajo.";
-            break;
-          case error.TIMEOUT:
-            errorMessage += "El GPS tardo mucho en responder. Intenta de nuevo o usa el selector manual debajo.";
-            break;
-        }
-        
-        toast.error(errorMessage, { duration: 6000 });
-        setDistanceCalculated(false);
+      (err: { code: number }) => {
+        const msgs: Record<number, string> = {
+          1: "Rechazaste el permiso. Elegí la distancia manualmente.",
+          2: "Ubicación no disponible. Verificá que tengas el GPS activado.",
+          3: "El GPS tardó demasiado. Intentá de nuevo o elegí manualmente.",
+        };
+        toast.error(msgs[err.code] ?? "No se pudo obtener tu ubicación.", { duration: 6000 });
         setIsCalculatingDistance(false);
       },
-      {
-        enableHighAccuracy: false, // Cambiar a false para que sea mas rapido en moviles
-        timeout: 30000, // 30 segundos (mas tiempo para moviles)
-        maximumAge: 0, // No usar ubicacion en cache
-      }
+      { enableHighAccuracy: false, timeout: 30000, maximumAge: 0 }
     );
+  }, [formData.address]);
+
+  const unlockManual = () => {
+    setGpsLocked(false);
+    setDistanceInfo(null);
+    setFormData((prev) => ({ ...prev, delivery_distance: "" }));
+    toast.info("Podés elegir la distancia manualmente.");
   };
+
+  const buildWhatsAppMessage = useCallback(
+    (orderNumber: number, pm: PaymentMethod, subtotal: number, totalConDelivery: number) => {
+      const pmText = pm === "cash" ? "EFECTIVO/TRANSFERENCIA" : "MERCADO PAGO (PAGADO)";
+      const ctx = { paymentMethod: pm, orderType: "delivery" as const };
+      let msg = `*NUEVO PEDIDO - ${pmText}*\n\n*Pedido #${orderNumber}*\n\n`;
+      msg += `*Cliente:* ${formData.name}\n*Telefono:* ${formData.phone}\n`;
+      if (fullAddress) msg += `*Direccion:* ${fullAddress}\n`;
+      if (formData.betweenStreets) msg += `*Entre calles:* ${formData.betweenStreets}\n`;
+      msg += `*Distancia:* ${getDeliveryLabel(formData.delivery_distance)}\n\n*DETALLE DEL PEDIDO:*\n\n`;
+      items.forEach((item, idx) => {
+        const unitPrice = getEffectiveUnitPrice(item.product, item.extras, ctx);
+        msg += `${idx + 1}. *${item.product.name}* x${item.quantity}\n`;
+        if (item.extras?.length)
+          msg += `   Extras: ${item.extras.map((e) => `${e.addon.name}${e.quantity > 1 ? ` x${e.quantity}` : ""}`).join(", ")}\n`;
+        msg += `   Subtotal: ${formatPrice(unitPrice * item.quantity)}\n\n`;
+      });
+      if (formData.notes) msg += `*Notas:* ${formData.notes}\n\n`;
+      msg += `Subtotal productos: ${formatPrice(subtotal)}\nCosto delivery: ${formatPrice(deliveryCost)}\n---------------------------\n`;
+      msg += `*TOTAL: ${formatPrice(totalConDelivery)}*\n*Metodo: ${pmText}*\n\n`;
+      msg += pm === "cash" ? "Pedido confirmado. Te contactaremos pronto!" : "PAGO YA REALIZADO - Confirmado con Mercado Pago";
+      return msg;
+    },
+    [formData, fullAddress, items, deliveryCost]
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!formData.name || !formData.phone || !formData.address) {
-      toast.error("Por favor completa todos los campos obligatorios");
+      toast.error("Completá todos los campos obligatorios");
       return;
     }
-
     if (!formData.delivery_distance) {
-      toast.error("Por favor seleccioná tu distancia aproximada o usá el GPS");
+      toast.error("Usá el GPS o elegí tu distancia manualmente");
       return;
     }
-
-    const hasEntreCalles = formData.betweenStreets.trim().length > 0;
-    const hasNotas = formData.notes.trim().length > 0;
-    if (!hasEntreCalles && !hasNotas) {
-      toast.error("Completá 'Entre calles' o 'Notas / info al repartidor' para que el repartidor pueda encontrarte");
+    if (!formData.betweenStreets.trim() && !formData.notes.trim()) {
+      toast.error("Completá 'Entre calles' o 'Notas' para que el repartidor te encuentre");
       return;
     }
-
     if (items.length === 0) {
       toast.error("Tu carrito está vacío");
       return;
@@ -236,137 +167,97 @@ export default function CheckoutPage() {
 
     setIsLoading(true);
 
+    const makeItems = (pm: PaymentMethod) =>
+      items.map((item) => ({
+        product_id: item.product.id,
+        quantity: item.quantity,
+        unit_price: getEffectiveUnitPrice(item.product, item.extras, {
+          paymentMethod: pm,
+          orderType: "delivery",
+        }),
+        extras: item.extras.map((e) => ({
+          addon_id: e.addon.id,
+          name: e.addon.name,
+          price: e.addon.price,
+          quantity: e.quantity,
+        })),
+      }));
+
+    const baseBody = {
+      customer_name: formData.name,
+      customer_phone: formData.phone,
+      customer_address: fullAddress,
+      between_streets: formData.betweenStreets,
+      notes: formData.notes,
+      delivery_distance: formData.delivery_distance,
+      delivery_cost: deliveryCost,
+      total_amount: totalWithDelivery,
+    };
+
     try {
-      // Si el método de pago es efectivo, manejar vía WhatsApp
       if (paymentMethod === "cash") {
-        // Crear orden en Supabase (sin MP)
-        const response = await fetch("/api/checkout/cash", {
+        const res = await fetch("/api/checkout/cash", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            customer_name: formData.name,
-            customer_phone: formData.phone,
-            customer_address: fullAddress,
-            between_streets: formData.betweenStreets,
-            notes: formData.notes,
-            delivery_distance: formData.delivery_distance,
-            delivery_cost: deliveryCost,
-            items: items.map((item) => ({
-              product_id: item.product.id,
-              quantity: item.quantity,
-              unit_price: getEffectiveUnitPrice(item.product, item.extras, { paymentMethod: 'cash', orderType: 'delivery' }),
-              extras: item.extras.map((extra) => ({
-                addon_id: extra.addon.id,
-                name: extra.addon.name,
-                price: extra.addon.price,
-                quantity: extra.quantity,
-              })),
-            })),
-            total_amount: totalWithDelivery,
-          }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...baseBody, items: makeItems("cash") }),
         });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || "Error al crear el pedido");
-        }
-
-        // Generar mensaje de WhatsApp (totales ya vienen con promo aplicada para efectivo) (totales ya vienen con promo aplicada para efectivo)
-        const message = generateWhatsAppMessage(data.order_number, 'cash', total, totalWithDelivery);
-        
-        // Número de WhatsApp del negocio (CAMBIAR POR EL TUYO)
-        const whatsappNumber = "5491168582586"; // Numero de WhatsApp configurado
-        const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
-
-        // Limpiar carrito y redirigir a WhatsApp
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Error al crear el pedido");
+        const message = buildWhatsAppMessage(data.order_number, "cash", total, totalWithDelivery);
         clearCart();
-        toast.success("Pedido creado! Redirigiendo a WhatsApp...");
-        
-        // Pequeño delay para que se vea el toast
+        toast.success("Pedido creado. Redirigiendo a WhatsApp…");
         setTimeout(() => {
-          window.location.href = whatsappUrl;
+          window.location.href = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
         }, 1500);
-        
         return;
       }
 
-      // Método Mercado Pago (flujo original)
-      const response = await fetch("/api/checkout", {
+      const res = await fetch("/api/checkout", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-          body: JSON.stringify({
-            customer_name: formData.name,
-            customer_phone: formData.phone,
-            customer_address: fullAddress,
-            between_streets: formData.betweenStreets,
-          notes: formData.notes,
-          delivery_distance: formData.delivery_distance,
-          delivery_cost: deliveryCost,
-          items: items.map((item) => ({
-            product_id: item.product.id,
-            quantity: item.quantity,
-            unit_price: getEffectiveUnitPrice(item.product, item.extras, { paymentMethod: 'mercadopago', orderType: 'delivery' }),
-            extras: item.extras.map((extra) => ({
-              addon_id: extra.addon.id,
-              name: extra.addon.name,
-              price: extra.addon.price,
-              quantity: extra.quantity,
-            })),
-          })),
-          total_amount: totalWithDelivery,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...baseBody, items: makeItems("mercadopago") }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Error al procesar el pedido");
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        console.error("Checkout error:", data);
-        throw new Error(data.error || "Error al procesar el pedido");
-      }
-
-      // Modo DEMO (sin Mercado Pago configurado)
       if (data.demo_mode) {
         clearCart();
-        toast.success("¡Pedido creado en modo DEMO! (pago automático)");
+        toast.success("¡Pedido creado en modo DEMO!");
         router.push(`/success?order_id=${data.order_id}`);
         return;
       }
 
-      // Guardar datos para WhatsApp después del pago
-      localStorage.setItem('pending_whatsapp_order', JSON.stringify({
-        orderNumber: data.order_number,
-        customerName: formData.name,
-        customerPhone: formData.phone,
-        address: formData.address,
-        betweenStreets: formData.betweenStreets,
-        deliveryDistance: formData.delivery_distance,
-        notes: formData.notes,
-        items: items.map(item => ({
-          name: item.product.name,
-          quantity: item.quantity,
-          totalPrice: item.totalPrice,
-          extras: item.extras,
-        })),
-        total: total,
-        deliveryCost: deliveryCost,
-        totalWithDelivery: totalWithDelivery,
-      }));
+      localStorage.setItem(
+        "pending_whatsapp_order",
+        JSON.stringify({
+          orderNumber: data.order_number,
+          customerName: formData.name,
+          customerPhone: formData.phone,
+          address: fullAddress,
+          betweenStreets: formData.betweenStreets,
+          deliveryDistance: formData.delivery_distance,
+          notes: formData.notes,
+          items: items.map((item) => ({
+            name: item.product.name,
+            quantity: item.quantity,
+            totalPrice: getEffectiveUnitPrice(item.product, item.extras, {
+              paymentMethod: "mercadopago",
+              orderType: "delivery",
+            }),
+            extras: item.extras,
+          })),
+          total,
+          deliveryCost,
+          totalWithDelivery,
+        })
+      );
 
-      // Redirigir a Mercado Pago
       if (data.init_point) {
         clearCart();
         window.location.href = data.init_point;
-      } else {
-        throw new Error("No se recibio el link de pago");
       }
-    } catch (error) {
-      console.error("Error:", error);
-      toast.error(error instanceof Error ? error.message : "Error al procesar el pedido");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error inesperado");
     } finally {
       setIsLoading(false);
     }
@@ -374,35 +265,24 @@ export default function CheckoutPage() {
 
   if (items.length === 0) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-6">
-        <div className="text-center">
-          <h1 className="mb-4 text-3xl font-bold text-white">
-            Tu carrito está vacío
-          </h1>
-          <p className="mb-8 text-zinc-400">
-            Agrega productos al carrito para continuar
-          </p>
-          <Button
-            onClick={() => router.push("/")}
-            className="bg-orange-600 hover:bg-orange-700"
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Volver al menú
-          </Button>
-        </div>
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-zinc-950">
+        <p className="text-xl text-zinc-300">Tu carrito está vacío</p>
+        <Button onClick={() => router.push("/")} variant="outline">
+          Volver al menú
+        </Button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 py-12">
-      <div className="mx-auto max-w-6xl px-6">
-        {/* Header */}
-        <div className="mb-8">
+    <div className="min-h-screen bg-zinc-950 pb-20">
+      <div className="mx-auto max-w-5xl px-4 py-8">
+        <div className="mb-8 flex items-center gap-4">
           <Button
             variant="ghost"
+            size="sm"
             onClick={() => router.push("/")}
-            className="mb-4 text-zinc-400 hover:text-white"
+            className="text-zinc-400 hover:text-white"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
             Volver al menú
@@ -411,12 +291,9 @@ export default function CheckoutPage() {
         </div>
 
         <div className="grid gap-8 lg:grid-cols-2">
-          {/* Formulario */}
           <Card className="border-zinc-800 bg-zinc-900/50">
             <CardHeader>
-              <CardTitle className="text-2xl text-white">
-                Información de entrega
-              </CardTitle>
+              <CardTitle className="text-2xl text-white">Información de entrega</CardTitle>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-6">
@@ -426,9 +303,7 @@ export default function CheckoutPage() {
                   </label>
                   <Input
                     value={formData.name}
-                    onChange={(e) =>
-                      setFormData({ ...formData, name: e.target.value })
-                    }
+                    onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
                     placeholder="Juan Pérez"
                     required
                     className="border-zinc-700 bg-zinc-800 text-white"
@@ -442,9 +317,7 @@ export default function CheckoutPage() {
                   <Input
                     type="tel"
                     value={formData.phone}
-                    onChange={(e) =>
-                      setFormData({ ...formData, phone: e.target.value })
-                    }
+                    onChange={(e) => setFormData((p) => ({ ...p, phone: e.target.value }))}
                     placeholder="+54 9 11 1234-5678"
                     required
                     className="border-zinc-700 bg-zinc-800 text-white"
@@ -457,18 +330,7 @@ export default function CheckoutPage() {
                   </label>
                   <Input
                     value={formData.address}
-                    onChange={(e) => {
-                      const newAddress = e.target.value;
-                      setFormData((prev) => ({
-                        ...prev,
-                        address: newAddress,
-                        ...(distanceCalculated ? { delivery_distance: "" } : {}),
-                      }));
-                      if (distanceCalculated) {
-                        setDistanceCalculated(false);
-                        setDistanceInfo(null);
-                      }
-                    }}
+                    onChange={(e) => handleAddressChange(e.target.value)}
                     placeholder="Ej: Av. Libertad 3325"
                     required
                     className="border-zinc-700 bg-zinc-800 text-white"
@@ -481,7 +343,7 @@ export default function CheckoutPage() {
                   </label>
                   <Input
                     value={formData.floor}
-                    onChange={(e) => setFormData({ ...formData, floor: e.target.value })}
+                    onChange={(e) => setFormData((p) => ({ ...p, floor: e.target.value }))}
                     placeholder="Opcional. Ej: 5to A"
                     className="border-zinc-700 bg-zinc-800 text-white"
                   />
@@ -489,113 +351,95 @@ export default function CheckoutPage() {
 
                 <div>
                   <label className="mb-2 block text-sm font-medium text-zinc-300">
-                    Entre calles / referencia de barrio <span className="text-red-500">*</span>
+                    Entre calles / referencia <span className="text-red-500">*</span>
                   </label>
                   <Input
                     value={formData.betweenStreets}
-                    onChange={(e) => setFormData({ ...formData, betweenStreets: e.target.value })}
-                    placeholder="Ej: Parana y Uruguay. Ayuda al repartidor"
+                    onChange={(e) => setFormData((p) => ({ ...p, betweenStreets: e.target.value }))}
+                    placeholder="Ej: Paraná y Uruguay"
                     className="border-zinc-700 bg-zinc-800 text-white"
                   />
                   <p className="mt-1 text-xs text-zinc-500">
-                    Obligatorio: completá este campo o las notas para el repartidor.
+                    Obligatorio: completá este campo o las notas.
                   </p>
                 </div>
 
-                {/* Aviso cuando aun no eligio distancia */}
-                {!formData.delivery_distance && formData.address.trim().length >= 5 && (
-                  <div className="rounded-lg border border-amber-600/50 bg-amber-600/10 p-4 text-sm text-amber-200">
-                    <p className="font-medium">¿No sabés la distancia exacta?</p>
-                    <p className="mt-1 text-amber-200/90">
-                      Usá el botón &quot;Calcular con GPS&quot; para que lo calculemos solos, o elegí abajo la opción que más se acerque a tu casa (ej. &quot;De 1 km a 1,4 km&quot;).
-                    </p>
-                  </div>
-                )}
+                <div className="space-y-3 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4">
+                  <p className="text-sm font-medium text-zinc-300">
+                    Distancia de delivery <span className="text-red-500">*</span>
+                  </p>
 
-                {/* Selector MANUAL de distancia (siempre disponible) */}
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-zinc-300">
-                    Distancia aproximada <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.delivery_distance}
-                    onChange={(e) => {
-                      setFormData({ ...formData, delivery_distance: e.target.value });
-                      if (e.target.value) {
-                        setDistanceCalculated(true);
-                        const rate = deliveryRates.find(r => r.value === e.target.value);
-                        if (rate) {
-                          setDistanceInfo({
-                            distance_km: 0,
-                            distance_text: rate.label,
-                            duration_text: "Estimado",
-                          });
-                        }
-                      }
-                    }}
-                    required
-                    disabled={isCalculatingDistance}
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-white disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-600"
-                  >
-                    <option value="">Selecciona tu distancia aproximada</option>
-                    {deliveryRates.map((rate) => (
-                      <option key={rate.value} value={rate.value}>
-                        {rate.label} - {formatPrice(rate.cost)}
-                      </option>
-                    ))}
-                  </select>
-                  {deliveryCost > 0 && (
-                    <p className="mt-2 text-sm text-orange-500">
-                      Costo de delivery: {formatPrice(deliveryCost)}
-                    </p>
-                  )}
-                  {distanceInfo?.distance_km && distanceInfo.distance_km > 0 && (
-                    <p className="mt-2 text-xs text-green-500">
-                      Calculado con GPS. Podes ajustarlo si es necesario.
-                    </p>
-                  )}
-
-                  {/* Info de distancia calculada */}
-                  {distanceCalculated && distanceInfo && (
-                    <div className="mt-3 rounded-lg border border-green-600 bg-green-600/10 p-4 text-sm">
-                      <div className="flex items-center gap-2 text-green-400">
-                        <MapPin className="h-5 w-5" />
-                        <p className="font-bold text-base">
-                          Distancia: {distanceInfo.distance_text} del local
-                        </p>
+                  {gpsLocked && distanceInfo ? (
+                    <div className="rounded-lg border border-green-600 bg-green-600/10 p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm font-bold text-green-400">
+                          <Lock className="h-4 w-4" />
+                          {distanceInfo.distance_text} del local
+                        </div>
+                        <button
+                          type="button"
+                          onClick={unlockManual}
+                          className="flex items-center gap-1 text-xs text-zinc-400 transition-colors hover:text-white"
+                        >
+                          <Unlock className="h-3 w-3" />
+                          Cambiar
+                        </button>
                       </div>
-                      <div className="mt-2 flex items-center justify-between text-green-300">
-                        <p>Tiempo estimado: {distanceInfo.duration_text}</p>
-                        <p className="font-bold">Delivery: {formatPrice(deliveryCost)}</p>
+                      <div className="mt-1 flex justify-between text-xs text-green-300">
+                        <span>⏱ {distanceInfo.duration_text}</span>
+                        <span className="font-bold">Delivery: {formatPrice(deliveryCost)}</span>
                       </div>
                     </div>
-                  )}
-                  
-                  {/* Boton GPS - opcion principal cuando no sabe la distancia */}
-                  <div className="mt-3">
-                    <Button
-                      type="button"
-                      onClick={useMyLocation}
-                      disabled={isCalculatingDistance || !formData.address || formData.address.trim().length < 5}
-                      variant="outline"
-                      className="w-full border-blue-600 bg-blue-600/10 text-blue-300 hover:bg-blue-600/20 disabled:opacity-50"
-                    >
-                      {isCalculatingDistance ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Calculando distancia...
-                        </>
-                      ) : (
-                        <>
-                          <MapPin className="mr-2 h-4 w-4" />
-                          Calcular distancia con mi ubicación (GPS)
-                        </>
+                  ) : (
+                    <>
+                      <Button
+                        type="button"
+                        onClick={useMyLocation}
+                        disabled={
+                          isCalculatingDistance || formData.address.trim().length < 5
+                        }
+                        variant="outline"
+                        className="w-full border-blue-600 bg-blue-600/10 text-blue-300 hover:bg-blue-600/20 disabled:opacity-50"
+                      >
+                        {isCalculatingDistance ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Calculando…
+                          </>
+                        ) : (
+                          <>
+                            <MapPin className="mr-2 h-4 w-4" />
+                            Calcular automáticamente con GPS
+                          </>
+                        )}
+                      </Button>
+                      <div className="flex items-center gap-2 text-xs text-zinc-500">
+                        <span className="flex-1 border-t border-zinc-700" />
+                        <span>o elegí manualmente</span>
+                        <span className="flex-1 border-t border-zinc-700" />
+                      </div>
+                      <select
+                        value={formData.delivery_distance}
+                        onChange={(e) =>
+                          setFormData((p) => ({ ...p, delivery_distance: e.target.value }))
+                        }
+                        disabled={isCalculatingDistance}
+                        className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-orange-600 disabled:opacity-50"
+                      >
+                        <option value="">Seleccioná tu distancia aproximada</option>
+                        {DELIVERY_RATES.map((r) => (
+                          <option key={r.value} value={r.value}>
+                            {r.label} — {formatPrice(r.cost)}
+                          </option>
+                        ))}
+                      </select>
+                      {deliveryCost > 0 && (
+                        <p className="text-sm text-orange-400">
+                          Costo de delivery: {formatPrice(deliveryCost)}
+                        </p>
                       )}
-                    </Button>
-                    <p className="mt-2 text-xs text-zinc-500">
-                      El navegador te pedirá permiso. Si no querés usar GPS, elegí la distancia aproximada en la lista de arriba.
-                    </p>
-                  </div>
+                    </>
+                  )}
                 </div>
 
                 <div>
@@ -604,215 +448,154 @@ export default function CheckoutPage() {
                   </label>
                   <textarea
                     value={formData.notes}
-                    onChange={(e) =>
-                      setFormData({ ...formData, notes: e.target.value })
-                    }
-                    placeholder="Ej: edificio blanco, timbre Martinez, sin cebolla, etc."
+                    onChange={(e) => setFormData((p) => ({ ...p, notes: e.target.value }))}
+                    placeholder="Ej: edificio blanco, timbre Martínez, sin cebolla…"
                     rows={3}
                     className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-orange-600"
                   />
                   <p className="mt-1 text-xs text-zinc-500">
-                    Obligatorio: completá este campo o entre calles para que el repartidor te encuentre.
+                    Obligatorio: completá este campo o entre calles.
                   </p>
                 </div>
 
-                {/* Selector de método de pago */}
                 <div>
                   <label className="mb-3 block text-sm font-medium text-zinc-300">
                     Método de pago <span className="text-red-500">*</span>
                   </label>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {/* Opción Mercado Pago */}
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod("mercadopago")}
-                      className={`flex items-center gap-3 rounded-lg border-2 p-4 transition-all ${
-                        paymentMethod === "mercadopago"
-                          ? "border-orange-600 bg-orange-600/10"
-                          : "border-zinc-700 bg-zinc-800/50 hover:border-zinc-600"
-                      }`}
-                    >
-                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
-                        paymentMethod === "mercadopago" ? "bg-orange-600" : "bg-zinc-700"
-                      }`}>
-                        <CreditCard className="h-5 w-5 text-white" />
-                      </div>
-                      <div className="text-left">
-                        <p className="font-bold text-white">Mercado Pago</p>
-                        <p className="text-xs text-zinc-400">Tarjeta o débito</p>
-                      </div>
-                    </button>
-
-                    {/* Opción Efectivo/Transferencia */}
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod("cash")}
-                      className={`flex items-center gap-3 rounded-lg border-2 p-4 transition-all ${
-                        paymentMethod === "cash"
-                          ? "border-green-600 bg-green-600/10"
-                          : "border-zinc-700 bg-zinc-800/50 hover:border-zinc-600"
-                      }`}
-                    >
-                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
-                        paymentMethod === "cash" ? "bg-green-600" : "bg-zinc-700"
-                      }`}>
-                        <Banknote className="h-5 w-5 text-white" />
-                      </div>
-                      <div className="text-left">
-                        <p className="font-bold text-white">Efectivo/Transferencia</p>
-                        <p className="text-xs text-zinc-400">Pago en entrega o transferencia</p>
-                      </div>
-                    </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    {(
+                      [
+                        {
+                          key: "mercadopago" as PaymentMethod,
+                          icon: <CreditCard className="h-5 w-5 text-white" />,
+                          label: "Mercado Pago",
+                          sub: "Tarjeta o débito",
+                        },
+                        {
+                          key: "cash" as PaymentMethod,
+                          icon: <Banknote className="h-5 w-5 text-white" />,
+                          label: "Efectivo / Transf.",
+                          sub: "Pago al recibir",
+                        },
+                      ] as const
+                    ).map(({ key, icon, label, sub }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setPaymentMethod(key)}
+                        className={`flex items-center gap-3 rounded-lg border-2 p-4 transition-all ${
+                          paymentMethod === key
+                            ? "border-orange-600 bg-orange-600/10"
+                            : "border-zinc-700 bg-zinc-800/50 hover:border-zinc-600"
+                        }`}
+                      >
+                        <div
+                          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+                            paymentMethod === key ? "bg-orange-600" : "bg-zinc-700"
+                          }`}
+                        >
+                          {icon}
+                        </div>
+                        <div className="text-left">
+                          <p className="text-sm font-bold text-white">{label}</p>
+                          <p className="text-xs text-zinc-400">{sub}</p>
+                        </div>
+                      </button>
+                    ))}
                   </div>
-
-                  {/* Info adicional según método */}
-                  {paymentMethod === "cash" && (
-                    <div className="mt-3 flex items-start gap-2 rounded-lg bg-green-600/10 p-3 text-sm text-green-400">
-                      <MessageCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <p>
-                        Tu pedido se enviará vía WhatsApp para coordinar el pago en efectivo o transferencia
-                      </p>
-                    </div>
-                  )}
                 </div>
 
                 <Button
                   type="submit"
-                  disabled={isLoading}
-                  className={`w-full py-6 text-lg font-bold ${
-                    paymentMethod === "cash"
-                      ? "bg-green-600 hover:bg-green-700"
-                      : "bg-orange-600 hover:bg-orange-700"
-                  }`}
+                  disabled={isLoading || !formData.delivery_distance}
+                  className="w-full bg-orange-600 py-6 text-lg font-bold hover:bg-orange-700 disabled:opacity-50"
                 >
                   {isLoading ? (
-                    "Procesando..."
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Procesando…
+                    </>
                   ) : paymentMethod === "cash" ? (
-                    <>
-                      <MessageCircle className="mr-2 h-5 w-5" />
-                      Enviar pedido por WhatsApp
-                    </>
+                    "Enviar pedido por WhatsApp 📲"
                   ) : (
-                    <>
-                      <CreditCard className="mr-2 h-5 w-5" />
-                      Pagar {formatPrice(totalWithDelivery)} con Mercado Pago
-                    </>
+                    "Pagar con Mercado Pago 💳"
                   )}
                 </Button>
               </form>
             </CardContent>
           </Card>
 
-          {/* Resumen del pedido */}
-          <div className="space-y-6">
+          <div>
             <Card className="border-zinc-800 bg-zinc-900/50">
               <CardHeader>
-                <CardTitle className="text-2xl text-white">
-                  Resumen del pedido
-                </CardTitle>
+                <CardTitle className="text-xl text-white">Resumen del pedido</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {items.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex gap-4 rounded-lg border border-zinc-800 bg-zinc-800/50 p-4"
-                  >
-                    <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md">
-                      <Image
-                        src={item.product.image_url}
-                        alt={item.product.name}
-                        fill
-                        className="object-cover"
-                        sizes="64px"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-semibold text-white">
-                        {item.product.name}
-                      </h4>
-                      {/* Mostrar extras */}
-                      {item.extras && item.extras.length > 0 && (
-                        <p className="text-xs text-zinc-400">
-                          {item.extras.map((extra, idx) => (
-                            <span key={idx}>
-                              {extra.addon.name}
-                              {extra.quantity > 1 && ` x${extra.quantity}`}
-                              {idx < item.extras.length - 1 && ', '}
-                            </span>
-                          ))}
-                        </p>
+                {items.map((item) => {
+                  const unitPrice = getEffectiveUnitPrice(
+                    item.product,
+                    item.extras,
+                    promoContext
+                  );
+                  return (
+                    <div key={item.id} className="flex gap-3">
+                      {item.product.image_url && (
+                        <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-zinc-800">
+                          <Image
+                            src={item.product.image_url}
+                            alt={item.product.name}
+                            fill
+                            className="object-cover"
+                          />
+                        </div>
                       )}
-                      <p className="text-sm text-zinc-400">
-                        {item.quantity} x {formatPrice(item.totalPrice)}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-semibold text-white">
+                          {item.product.name}
+                        </p>
+                        {item.extras?.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {item.extras.map((e) => (
+                              <span
+                                key={e.addon.id}
+                                className="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-xs text-zinc-300"
+                              >
+                                {e.addon.name}
+                                {e.quantity > 1 && (
+                                  <span className="ml-1 font-bold text-orange-400">
+                                    x{e.quantity}
+                                  </span>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <p className="mt-1 text-sm text-zinc-400">
+                          {item.quantity} × {formatPrice(unitPrice)}
+                        </p>
+                      </div>
+                      <p className="shrink-0 font-bold text-white">
+                        {formatPrice(unitPrice * item.quantity)}
                       </p>
                     </div>
-                    <div className="text-right">
-                      <p className="font-bold text-orange-500">
-                        {formatPrice(item.totalPrice * item.quantity)}
-                      </p>
-                    </div>
+                  );
+                })}
+                <div className="space-y-2 border-t border-zinc-700 pt-4 text-sm">
+                  <div className="flex justify-between text-zinc-400">
+                    <span>Subtotal</span>
+                    <span>{formatPrice(total)}</span>
                   </div>
-                ))}
-
-                <div className="space-y-2 border-t border-zinc-700 pt-4">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-400">Subtotal productos:</span>
-                    <span className="text-zinc-300">{formatPrice(total)}</span>
+                  <div className="flex justify-between text-zinc-400">
+                    <span>Delivery</span>
+                    <span>{deliveryCost > 0 ? formatPrice(deliveryCost) : "—"}</span>
                   </div>
-                  {deliveryCost > 0 && (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-zinc-400">Delivery:</span>
-                      <span className="text-zinc-300">{formatPrice(deliveryCost)}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between border-t border-zinc-700 pt-2 text-2xl font-bold">
-                    <span className="text-zinc-300">Total:</span>
+                  <div className="flex justify-between border-t border-zinc-700 pt-2 text-xl font-black text-white">
+                    <span>Total</span>
                     <span className="text-orange-500">{formatPrice(totalWithDelivery)}</span>
-                  </div>
-                  <div className="mt-3 flex items-center gap-2 text-sm text-zinc-400">
-                    <Clock className="h-4 w-4 shrink-0" />
-                    <span>Entrega estimada: 30-45 min</span>
                   </div>
                 </div>
               </CardContent>
             </Card>
-
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6">
-              <h3 className="mb-4 font-semibold text-white">
-                💳 Métodos de pago disponibles
-              </h3>
-              
-              {/* Mercado Pago */}
-              <div className="mb-4">
-                <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-orange-500">
-                  <CreditCard className="h-4 w-4" />
-                  Mercado Pago
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {["Visa", "Mastercard", "American Express", "Débito", "Crédito"].map(
-                    (method) => (
-                      <div
-                        key={method}
-                        className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300"
-                      >
-                        {method}
-                      </div>
-                    )
-                  )}
-                </div>
-              </div>
-
-              {/* Efectivo/Transferencia */}
-              <div>
-                <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-green-500">
-                  <Banknote className="h-4 w-4" />
-                  Efectivo/Transferencia
-                </p>
-                <p className="text-xs text-zinc-400">
-                  Pago en efectivo al recibir o transferencia bancaria. Coordinación vía WhatsApp.
-                </p>
-              </div>
-            </div>
           </div>
         </div>
       </div>

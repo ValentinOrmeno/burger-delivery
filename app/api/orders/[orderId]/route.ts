@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { formatPrice } from "@/lib/utils";
-
-const WHATSAPP_NUMBER = "5491168582586";
-
-const deliveryRates = [
-  { label: "Hasta 950 m", value: "0-950" },
-  { label: "De 1 km a 1,4 km", value: "1000-1400" },
-  { label: "De 1,5 km a 2,4 km", value: "1500-2400" },
-  { label: "De 2,5 km a 3,4 km", value: "2500-3400" },
-  { label: "De 3,5 km a 4 km", value: "3500-4000" },
-];
+import { WHATSAPP_NUMBER, getDeliveryLabel } from "@/lib/constants";
 
 /**
  * GET /api/orders/[orderId]
- * Devuelve SOLO la URL de WhatsApp para redirigir al cliente.
- * Los datos del pedido se usan solo en el servidor; no se exponen al cliente.
+ * Devuelve solo la URL de WhatsApp para redirigir al cliente post-pago MP.
  */
 export async function GET(
   _request: NextRequest,
@@ -29,10 +19,9 @@ export async function GET(
 
     const supabase = getSupabaseAdmin();
 
-    const { data: order, error: orderError } = await supabase
+    const { data: order, error } = await supabase
       .from("orders")
-      .select(
-        `
+      .select(`
         order_number,
         customer_name,
         customer_phone,
@@ -48,16 +37,12 @@ export async function GET(
           products ( name ),
           extras
         )
-      `
-      )
+      `)
       .eq("id", orderId)
       .single();
 
-    if (orderError || !order) {
-      return NextResponse.json(
-        { error: "Orden no encontrada" },
-        { status: 404 }
-      );
+    if (error || !order) {
+      return NextResponse.json({ error: "Orden no encontrada" }, { status: 404 });
     }
 
     const items = (order.order_items as Array<{
@@ -69,7 +54,7 @@ export async function GET(
 
     const deliveryCost = order.delivery_cost ?? 0;
     const subtotal = order.total_amount - deliveryCost;
-    const rate = deliveryRates.find((r) => r.value === order.delivery_distance);
+    const distanceLabel = getDeliveryLabel(order.delivery_distance ?? "");
 
     let message = `*NUEVO PEDIDO - MERCADO PAGO (PAGADO)*\n\n`;
     message += `*Pedido #${order.order_number ?? "?"}*\n\n`;
@@ -77,16 +62,20 @@ export async function GET(
     message += `*Telefono:* ${order.customer_phone}\n`;
     if (order.customer_address) message += `*Direccion:* ${order.customer_address}\n`;
     if (order.between_streets) message += `*Entre calles:* ${order.between_streets}\n`;
-    if (rate) message += `*Distancia:* ${rate.label}\n`;
+    if (distanceLabel) message += `*Distancia:* ${distanceLabel}\n`;
     message += `\n*DETALLE DEL PEDIDO:*\n\n`;
+
     items.forEach((item, idx) => {
-      const total = item.unit_price * item.quantity;
+      const lineTotal = item.unit_price * item.quantity;
       message += `${idx + 1}. *${item.products?.name ?? "Producto"}* x${item.quantity}\n`;
       if (item.extras?.length) {
-        message += `   Extras: ${item.extras.map((e) => `${e.name}${e.quantity > 1 ? ` x${e.quantity}` : ""}`).join(", ")}\n`;
+        message += `   Extras: ${item.extras
+          .map((e) => `${e.name}${e.quantity > 1 ? ` x${e.quantity}` : ""}`)
+          .join(", ")}\n`;
       }
-      message += `   Subtotal: ${formatPrice(total)}\n\n`;
+      message += `   Subtotal: ${formatPrice(lineTotal)}\n\n`;
     });
+
     if (order.notes) message += `*Notas:* ${order.notes}\n\n`;
     message += `Subtotal productos: ${formatPrice(subtotal)}\n`;
     message += `Costo delivery: ${formatPrice(deliveryCost)}\n`;
@@ -96,7 +85,6 @@ export async function GET(
     message += `PAGO YA REALIZADO - Pedido confirmado y pagado con Mercado Pago`;
 
     const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
-
     return NextResponse.json({ whatsappUrl });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

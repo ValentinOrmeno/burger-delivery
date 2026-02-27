@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getDeliveryCostByDistanceKm } from "@/lib/constants";
 
 // 📍 COORDENADAS DEL LOCAL
 // Link de Google Maps: https://maps.app.goo.gl/pdPgTyyquonJBjbz8
@@ -54,7 +55,51 @@ export async function POST(request: NextRequest) {
     if (latitude !== undefined && longitude !== undefined) {
       console.log("Calculando distancia con GPS:", { latitude, longitude });
 
-      // Calcular distancia usando coordenadas GPS
+      // Ideal: distancia en auto (Google Distance Matrix) si hay API key.
+      // Fallback: línea recta (Haversine) si no hay key.
+      const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+      if (apiKey) {
+        const origin = `${STORE_COORDINATES.lat},${STORE_COORDINATES.lng}`;
+        const destination = `${latitude},${longitude}`;
+        const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${apiKey}&language=es&mode=driving&units=metric`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+        const element = data.rows?.[0]?.elements?.[0];
+
+        if (data.status === "OK" && element?.status === "OK") {
+          const distanceMeters = element.distance.value as number;
+          const distanceKm = distanceMeters / 1000;
+          const distanceText = element.distance.text as string;
+          const durationText = element.duration.text as string;
+
+          const { cost, range, outOfRange } =
+            getDeliveryCostByDistanceKm(distanceKm);
+
+          if (outOfRange) {
+            return NextResponse.json({
+              success: false,
+              error: `Lo sentimos, estás a ${distanceKm.toFixed(
+                1
+              )} km del local. Solo hacemos delivery hasta 4 km.`,
+              distance_km: distanceKm,
+              distance_text: distanceText,
+              duration_text: durationText,
+            });
+          }
+
+          return NextResponse.json({
+            success: true,
+            distance_km: distanceKm,
+            distance_text: distanceText,
+            duration_text: durationText,
+            delivery_cost: cost,
+            delivery_range: range,
+          });
+        }
+      }
+
+      // Fallback: distancia en línea recta (puede diferir de la distancia en auto)
       const distanceKm = calculateDistanceFromCoordinates(
         STORE_COORDINATES.lat,
         STORE_COORDINATES.lng,
@@ -62,11 +107,10 @@ export async function POST(request: NextRequest) {
         longitude
       );
 
-      const distanceText = `${distanceKm.toFixed(1)} km`;
-      const durationText = `${Math.ceil(distanceKm * 3)} min`; // Estimación: 3 min por km
+      const distanceText = `${distanceKm.toFixed(1)} km (línea recta)`;
+      const durationText = `${Math.ceil(distanceKm * 3)} min aprox.`; // Estimación
 
-      // Calcular tarifa según distancia
-      const { cost, range, outOfRange } = calculateDeliveryCost(distanceKm);
+      const { cost, range, outOfRange } = getDeliveryCostByDistanceKm(distanceKm);
 
       if (outOfRange) {
         return NextResponse.json({
@@ -105,7 +149,7 @@ export async function POST(request: NextRequest) {
     const origin = `${STORE_COORDINATES.lat},${STORE_COORDINATES.lng}`;
     const destination = encodeURIComponent(address);
     
-    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${apiKey}&language=es`;
+    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${apiKey}&language=es&mode=driving&units=metric`;
 
     const response = await fetch(url);
     const data = await response.json();
@@ -132,8 +176,7 @@ export async function POST(request: NextRequest) {
     const distanceText = element.distance.text;
     const durationText = element.duration.text;
 
-    // Calcular tarifa según distancia
-    const { cost, range, outOfRange } = calculateDeliveryCost(distanceKm);
+    const { cost, range, outOfRange } = getDeliveryCostByDistanceKm(distanceKm);
 
     if (outOfRange) {
       return NextResponse.json({
@@ -164,34 +207,11 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Función auxiliar para calcular costo según distancia
-function calculateDeliveryCost(distanceKm: number): {
-  cost: number;
-  range: string;
-  outOfRange: boolean;
-} {
-  // Rangos exactos según tu imagen
-  if (distanceKm <= 0.95) {
-    return { cost: 600, range: "0-950", outOfRange: false };
-  } else if (distanceKm <= 1.4) {
-    return { cost: 1400, range: "1000-1400", outOfRange: false };
-  } else if (distanceKm <= 2.4) {
-    return { cost: 1700, range: "1500-2400", outOfRange: false };
-  } else if (distanceKm <= 3.4) {
-    return { cost: 2000, range: "2500-3400", outOfRange: false };
-  } else if (distanceKm <= 4.0) {
-    return { cost: 2300, range: "3500-4000", outOfRange: false };
-  } else {
-    // Fuera del rango de delivery
-    return { cost: 0, range: "", outOfRange: true };
-  }
-}
-
 // Simulación para desarrollo (sin API key)
 function simulateDistance(address: string): NextResponse<DistanceResponse> {
   // Simular una distancia aleatoria entre 0.5 y 3.5 km
   const distanceKm = 0.5 + Math.random() * 3;
-  const { cost, range } = calculateDeliveryCost(distanceKm);
+  const { cost, range } = getDeliveryCostByDistanceKm(distanceKm);
 
   return NextResponse.json({
     success: true,

@@ -32,7 +32,6 @@ import {
   Monitor,
   StickyNote,
   Download,
-  AlertTriangle,
   User,
   XCircle,
   Timer,

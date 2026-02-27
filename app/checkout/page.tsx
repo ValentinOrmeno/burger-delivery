@@ -143,7 +143,7 @@ export default function CheckoutPage() {
       msg += pm === "cash" ? "Pedido confirmado. Te contactaremos pronto!" : "PAGO YA REALIZADO - Confirmado con Mercado Pago";
       return msg;
     },
-    [formData, fullAddress, items, deliveryCost]
+    [formData, fullAddress, items, deliveryCost, getEffectiveUnitPrice]
   );
 
   const handleSubmit = async (e: React.FormEvent) => {

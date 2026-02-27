@@ -9,9 +9,8 @@ const STORE_COORDINATES = {
   lng: -58.766381, // Longitud del local
 };
 
-// Factor de corrección para alinear distancias de ORS con la realidad de las rutas de Google Maps
-const SAFETY_FACTOR = 1.5;
-// Factor adicional para línea recta (fallback Haversine) para ser aún más conservadores
+// Mapbox Directions devuelve distancia en ruta real; no aplicamos factor de corrección.
+// Solo para fallback en línea recta (Haversine) usamos un factor conservador:
 const STRAIGHT_LINE_FACTOR = 2.0;
 
 type DistanceResponse = {
@@ -60,32 +59,34 @@ export async function POST(request: NextRequest) {
     if (latitude !== undefined && longitude !== undefined) {
       console.log("Calculando distancia con GPS:", { latitude, longitude });
 
-      // 1) Preferir OpenRouteService (distancia en auto) si hay API key
-      const orsKey = process.env.OPENROUTESERVICE_API_KEY;
-      let distanceKmFromOrs: number | null = null;
+      // 1) Preferir Mapbox Directions API (distancia en auto, mismo token que Geocoding)
+      const mapboxToken = process.env.MAPBOX_ACCESS_TOKEN;
+      let distanceKmFromMapbox: number | null = null;
       let durationMinutes: number | null = null;
 
-      if (orsKey) {
+      if (mapboxToken) {
         try {
-          const url = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${encodeURIComponent(
-            orsKey
-          )}&start=${STORE_COORDINATES.lng},${STORE_COORDINATES.lat}&end=${longitude},${latitude}`;
+          // Coordenadas: origen;destino en formato lng,lat (store -> cliente)
+          const coords = `${STORE_COORDINATES.lng},${STORE_COORDINATES.lat};${longitude},${latitude}`;
+          const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?access_token=${encodeURIComponent(
+            mapboxToken
+          )}`;
 
-          const orsRes = await fetch(url);
+          const res = await fetch(url);
+          const data = (await res.json()) as {
+            routes?: Array<{ distance?: number; duration?: number }>;
+            code?: string;
+          };
 
-          const orsData = await orsRes.json();
-          const summary =
-            orsData?.features?.[0]?.properties?.summary ??
-            orsData?.routes?.[0]?.summary;
-
-          if (orsRes.ok && summary?.distance != null && summary?.duration != null) {
-            const distanceMeters = summary.distance as number;
-            distanceKmFromOrs = distanceMeters / 1000;
-            const durationSeconds = summary.duration as number;
-            durationMinutes = Math.round(durationSeconds / 60);
+          if (res.ok && data?.routes?.[0]) {
+            const route = data.routes[0];
+            if (route.distance != null && route.duration != null) {
+              distanceKmFromMapbox = route.distance / 1000; // metros -> km
+              durationMinutes = Math.round(route.duration / 60); // segundos -> min
+            }
           }
         } catch (e) {
-          console.error("Error llamando a OpenRouteService:", e);
+          console.error("Error llamando a Mapbox Directions:", e);
         }
       }
 
@@ -93,11 +94,9 @@ export async function POST(request: NextRequest) {
       let durationText: string;
       let distanceText: string;
 
-      if (distanceKmFromOrs != null && durationMinutes != null) {
-        // ORS funcionó: aplicar SAFETY_FACTOR y redondear
-        const conservativeKm =
-          Math.round(distanceKmFromOrs * SAFETY_FACTOR * 10) / 10;
-        adjustedDistanceKm = conservativeKm;
+      if (distanceKmFromMapbox != null && durationMinutes != null) {
+        // Mapbox funcionó: usar distancia tal cual (datos de ruta en auto)
+        adjustedDistanceKm = Math.round(distanceKmFromMapbox * 10) / 10;
         distanceText = `${adjustedDistanceKm.toFixed(1)} km`;
         durationText = `${durationMinutes} min`;
       } else {
@@ -114,7 +113,7 @@ export async function POST(request: NextRequest) {
         distanceText = `${adjustedDistanceKm.toFixed(
           1
         )} km (línea recta aprox.)`;
-        durationText = `${Math.ceil(adjustedDistanceKm * 3)} min aprox.`; // Estimación básica
+        durationText = `${Math.ceil(adjustedDistanceKm * 3)} min aprox.`;
         console.warn(
           "Usando cálculo de línea recta (Haversine) para distancia de delivery"
         );
@@ -166,7 +165,7 @@ export async function POST(request: NextRequest) {
 }
 
 // Simulación para desarrollo (sin API key)
-function simulateDistance(address: string): NextResponse<DistanceResponse> {
+function simulateDistance(_address: string): NextResponse<DistanceResponse> {
   // Simular una distancia aleatoria entre 0.5 y 3.5 km
   const distanceKm = 0.5 + Math.random() * 3;
   const { cost, range } = getDeliveryCostByDistanceKm(distanceKm);

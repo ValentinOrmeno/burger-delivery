@@ -9,6 +9,11 @@ const STORE_COORDINATES = {
   lng: -58.766381, // Longitud del local
 };
 
+// Factor de corrección para alinear distancias de ORS con la realidad de las rutas de Google Maps
+const SAFETY_FACTOR = 1.5;
+// Factor adicional para línea recta (fallback Haversine) para ser aún más conservadores
+const STRAIGHT_LINE_FACTOR = 2.0;
+
 type DistanceResponse = {
   success: boolean;
   distance_km?: number;
@@ -55,75 +60,83 @@ export async function POST(request: NextRequest) {
     if (latitude !== undefined && longitude !== undefined) {
       console.log("Calculando distancia con GPS:", { latitude, longitude });
 
-      // Ideal: distancia en auto (Google Distance Matrix) si hay API key.
-      // Fallback: línea recta (Haversine) si no hay key.
-      const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-      if (apiKey) {
-        const origin = `${STORE_COORDINATES.lat},${STORE_COORDINATES.lng}`;
-        const destination = `${latitude},${longitude}`;
-        const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${apiKey}&language=es&mode=driving&units=metric`;
+      // 1) Preferir OpenRouteService (distancia en auto) si hay API key
+      const orsKey = process.env.OPENROUTESERVICE_API_KEY;
+      let distanceKmFromOrs: number | null = null;
+      let durationMinutes: number | null = null;
 
-        const response = await fetch(url);
-        const data = await response.json();
-        const element = data.rows?.[0]?.elements?.[0];
+      if (orsKey) {
+        try {
+          const url = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${encodeURIComponent(
+            orsKey
+          )}&start=${STORE_COORDINATES.lng},${STORE_COORDINATES.lat}&end=${longitude},${latitude}`;
 
-        if (data.status === "OK" && element?.status === "OK") {
-          const distanceMeters = element.distance.value as number;
-          const distanceKm = distanceMeters / 1000;
-          const distanceText = element.distance.text as string;
-          const durationText = element.duration.text as string;
+          const orsRes = await fetch(url);
 
-          const { cost, range, outOfRange } =
-            getDeliveryCostByDistanceKm(distanceKm);
+          const orsData = await orsRes.json();
+          const summary =
+            orsData?.features?.[0]?.properties?.summary ??
+            orsData?.routes?.[0]?.summary;
 
-          if (outOfRange) {
-            return NextResponse.json({
-              success: false,
-              error: `Lo sentimos, estás a ${distanceKm.toFixed(
-                1
-              )} km del local. Solo hacemos delivery hasta 4 km.`,
-              distance_km: distanceKm,
-              distance_text: distanceText,
-              duration_text: durationText,
-            });
+          if (orsRes.ok && summary?.distance != null && summary?.duration != null) {
+            const distanceMeters = summary.distance as number;
+            distanceKmFromOrs = distanceMeters / 1000;
+            const durationSeconds = summary.duration as number;
+            durationMinutes = Math.round(durationSeconds / 60);
           }
-
-          return NextResponse.json({
-            success: true,
-            distance_km: distanceKm,
-            distance_text: distanceText,
-            duration_text: durationText,
-            delivery_cost: cost,
-            delivery_range: range,
-          });
+        } catch (e) {
+          console.error("Error llamando a OpenRouteService:", e);
         }
       }
 
-      // Fallback: distancia en línea recta (puede diferir de la distancia en auto)
-      const distanceKm = calculateDistanceFromCoordinates(
-        STORE_COORDINATES.lat,
-        STORE_COORDINATES.lng,
-        latitude,
-        longitude
-      );
+      let adjustedDistanceKm: number;
+      let durationText: string;
+      let distanceText: string;
 
-      const distanceText = `${distanceKm.toFixed(1)} km (línea recta)`;
-      const durationText = `${Math.ceil(distanceKm * 3)} min aprox.`; // Estimación
+      if (distanceKmFromOrs != null && durationMinutes != null) {
+        // ORS funcionó: aplicar SAFETY_FACTOR y redondear
+        const conservativeKm =
+          Math.round(distanceKmFromOrs * SAFETY_FACTOR * 10) / 10;
+        adjustedDistanceKm = conservativeKm;
+        distanceText = `${adjustedDistanceKm.toFixed(1)} km`;
+        durationText = `${durationMinutes} min`;
+      } else {
+        // 2) Fallback: distancia en línea recta (Haversine) con STRAIGHT_LINE_FACTOR
+        const straightKm = calculateDistanceFromCoordinates(
+          STORE_COORDINATES.lat,
+          STORE_COORDINATES.lng,
+          latitude,
+          longitude
+        );
+        const conservativeStraightKm =
+          Math.round(straightKm * STRAIGHT_LINE_FACTOR * 10) / 10;
+        adjustedDistanceKm = conservativeStraightKm;
+        distanceText = `${adjustedDistanceKm.toFixed(
+          1
+        )} km (línea recta aprox.)`;
+        durationText = `${Math.ceil(adjustedDistanceKm * 3)} min aprox.`; // Estimación básica
+        console.warn(
+          "Usando cálculo de línea recta (Haversine) para distancia de delivery"
+        );
+      }
 
-      const { cost, range, outOfRange } = getDeliveryCostByDistanceKm(distanceKm);
+      const { cost, range, outOfRange } =
+        getDeliveryCostByDistanceKm(adjustedDistanceKm);
 
       if (outOfRange) {
         return NextResponse.json({
           success: false,
-          error: `Lo sentimos, estás a ${distanceKm.toFixed(1)} km del local. Solo hacemos delivery hasta 4 km.`,
-          distance_km: distanceKm,
+          error: `Lo sentimos, estás a ${adjustedDistanceKm.toFixed(
+            1
+          )} km del local. Solo hacemos delivery hasta 4 km.`,
+          distance_km: adjustedDistanceKm,
           distance_text: distanceText,
         });
       }
 
       return NextResponse.json({
         success: true,
-        distance_km: distanceKm,
+        distance_km: adjustedDistanceKm,
         distance_text: distanceText,
         duration_text: durationText,
         delivery_cost: cost,
@@ -138,63 +151,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verificar que Google Maps API esté configurada
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-    if (!apiKey) {
-      console.warn("Google Maps API Key no configurada, usando simulación");
-      return simulateDistance(address);
-    }
-
-    // Usar Distance Matrix API de Google Maps
-    const origin = `${STORE_COORDINATES.lat},${STORE_COORDINATES.lng}`;
-    const destination = encodeURIComponent(address);
-    
-    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${apiKey}&language=es&mode=driving&units=metric`;
-
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (data.status !== "OK") {
-      return NextResponse.json({
-        success: false,
-        error: "No se pudo calcular la distancia. Verificá la dirección ingresada.",
-      });
-    }
-
-    const element = data.rows[0]?.elements[0];
-    
-    if (!element || element.status !== "OK") {
-      return NextResponse.json({
-        success: false,
-        error: "Dirección no encontrada. Por favor, ingresá una dirección válida.",
-      });
-    }
-
-    // Distancia en kilómetros
-    const distanceMeters = element.distance.value;
-    const distanceKm = distanceMeters / 1000;
-    const distanceText = element.distance.text;
-    const durationText = element.duration.text;
-
-    const { cost, range, outOfRange } = getDeliveryCostByDistanceKm(distanceKm);
-
-    if (outOfRange) {
-      return NextResponse.json({
-        success: false,
-        error: `Lo sentimos, tu dirección está a ${distanceKm.toFixed(1)} km. Solo hacemos delivery hasta 4 km del local.`,
-        distance_km: distanceKm,
-        distance_text: distanceText,
-      });
-    }
-
-    return NextResponse.json({
-      success: true,
-      distance_km: distanceKm,
-      distance_text: distanceText,
-      duration_text: durationText,
-      delivery_cost: cost,
-      delivery_range: range,
-    });
+    // Sin GPS usamos una simulación simple (no dependemos de Google ni de otros proveedores)
+    return simulateDistance(address);
   } catch (error) {
     console.error("Error calculating distance:", error);
     return NextResponse.json(

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { Plus } from "lucide-react";
+import { Plus, ChevronDown } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,15 +17,6 @@ interface ProductCardProps {
   isFeatured?: boolean;
 }
 
-const categoryLabels: Record<Product['category'], string> = {
-  burger: 'Hamburguesa',
-  veggie: 'Veggie',
-  bondiolita: 'Bondiolita',
-  pancho: 'Pancho',
-  sides: 'Acompañamiento',
-  dessert: 'Postre',
-};
-
 // Categorías que permiten personalización
 const customizableCategories = ['burger', 'veggie', 'bondiolita'];
 
@@ -35,15 +26,16 @@ const includesFries = ['burger', 'veggie', 'bondiolita'];
 export function ProductCard({ product, isFeatured = false }: ProductCardProps) {
   const addItem = useCartStore((state) => state.addItem);
   const [showCustomizer, setShowCustomizer] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
   
   const isCustomizable = customizableCategories.includes(product.category);
+  // Descripción larga si tiene más de ~80 caracteres
+  const isLongDesc = (product.description?.length ?? 0) > 80;
 
   const handleAddToCart = () => {
     if (isCustomizable) {
-      // Abrir el customizer
       setShowCustomizer(true);
     } else {
-      // Agregar directo al carrito
       addItem(product, 1, []);
       toast.success(`${product.name} agregado al carrito`, {
         duration: 2000,
@@ -73,16 +65,14 @@ export function ProductCard({ product, isFeatured = false }: ProductCardProps) {
             className="object-cover transition-transform duration-500 group-hover:scale-110 group-hover:brightness-110"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
           />
-          {/* Overlay con gradiente más fuerte */}
+          {/* Overlay con gradiente */}
           <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/40 to-transparent" />
           
           {/* Efecto de brillo al hover */}
           <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-orange-500/0 to-transparent opacity-0 transition-opacity duration-500 group-hover:via-orange-500/20 group-hover:opacity-100" />
           
+          {/* Badges superiores: solo DE LA CASA */}
           <div className="absolute left-3 top-3 flex flex-col gap-2">
-            <Badge className="bg-orange-600 text-xs font-bold text-white shadow-lg">
-              {categoryLabels[product.category]}
-            </Badge>
             {isFeatured && (
               <Badge className="animate-pulse bg-yellow-500 text-xs font-bold text-zinc-950 shadow-lg">
                 ⭐ DE LA CASA
@@ -90,14 +80,7 @@ export function ProductCard({ product, isFeatured = false }: ProductCardProps) {
             )}
           </div>
 
-          {/* Badge de personalizable */}
-          {isCustomizable && (
-            <Badge className="absolute right-3 top-3 bg-green-600 text-xs font-bold text-white shadow-lg">
-              ✨ Personalizable
-            </Badge>
-          )}
-
-          {/* Badge "Incluye papas" visible en la imagen */}
+          {/* Badge "Incluye papas" en la imagen */}
           {includesFries.includes(product.category) && (
             <div className="absolute bottom-3 left-3">
               <Badge className="bg-zinc-950/80 text-xs font-semibold text-orange-400 backdrop-blur-sm">
@@ -108,17 +91,39 @@ export function ProductCard({ product, isFeatured = false }: ProductCardProps) {
         </div>
 
         <CardContent className="space-y-4 p-5">
-          {/* Nombre del producto - jerarquia principal */}
+          {/* Nombre del producto */}
           <h3 className={`font-black leading-tight text-white ${isFeatured ? "text-2xl" : "text-xl"}`}>
             {product.name}
           </h3>
 
-          {/* Descripcion - secundaria, menos peso visual */}
-          <p className="text-sm leading-relaxed text-zinc-500 line-clamp-2">
-            {product.description}
-          </p>
+          {/* Descripción con expand */}
+          {product.description && (
+            <div>
+              <p
+                className={`text-sm leading-relaxed text-zinc-500 transition-all duration-300 ${
+                  descExpanded ? "" : "line-clamp-2"
+                }`}
+              >
+                {product.description}
+              </p>
+              {isLongDesc && (
+                <button
+                  type="button"
+                  onClick={() => setDescExpanded((v) => !v)}
+                  className="mt-1 flex items-center gap-0.5 text-xs font-medium text-zinc-500 transition-colors hover:text-orange-400"
+                >
+                  {descExpanded ? "ver menos" : "ver más"}
+                  <ChevronDown
+                    className={`h-3 w-3 transition-transform duration-200 ${
+                      descExpanded ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+              )}
+            </div>
+          )}
 
-          {/* Precio - destacado, facil de leer */}
+          {/* Precio */}
           <div className="rounded-lg border border-orange-600/30 bg-orange-600/15 px-4 py-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wide text-orange-400">
@@ -144,7 +149,7 @@ export function ProductCard({ product, isFeatured = false }: ProductCardProps) {
             )}
           </div>
 
-          {/* Botón de acción mejorado */}
+          {/* Botón de acción */}
           <Button
             onClick={handleAddToCart}
             className="group/btn relative w-full overflow-hidden bg-gradient-to-r from-orange-600 to-orange-500 py-6 font-bold text-white shadow-lg transition-all duration-300 hover:from-orange-500 hover:to-orange-600 hover:shadow-xl hover:shadow-orange-600/50 disabled:from-zinc-800 disabled:to-zinc-900"

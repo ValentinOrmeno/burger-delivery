@@ -9,8 +9,9 @@ const STORE_COORDINATES = {
   lng: -58.766381, // Longitud del local
 };
 
-// Mapbox Directions devuelve distancia en ruta real; no aplicamos factor de corrección.
-// Solo para fallback en línea recta (Haversine) usamos un factor conservador:
+// Factor de seguridad sobre la distancia de Mapbox Directions (rutas en auto)
+const SAFETY_FACTOR = 1.5;
+// Fallback en línea recta (Haversine): factor conservador
 const STRAIGHT_LINE_FACTOR = 2.0;
 
 type DistanceResponse = {
@@ -95,8 +96,9 @@ export async function POST(request: NextRequest) {
       let distanceText: string;
 
       if (distanceKmFromMapbox != null && durationMinutes != null) {
-        // Mapbox funcionó: usar distancia tal cual (datos de ruta en auto)
-        adjustedDistanceKm = Math.round(distanceKmFromMapbox * 10) / 10;
+        // Mapbox funcionó: aplicar SAFETY_FACTOR y redondear a 1 decimal
+        const withSafety = distanceKmFromMapbox * SAFETY_FACTOR;
+        adjustedDistanceKm = Math.round(withSafety * 10) / 10;
         distanceText = `${adjustedDistanceKm.toFixed(1)} km`;
         durationText = `${durationMinutes} min`;
       } else {
@@ -107,12 +109,9 @@ export async function POST(request: NextRequest) {
           latitude,
           longitude
         );
-        const conservativeStraightKm =
-          Math.round(straightKm * STRAIGHT_LINE_FACTOR * 10) / 10;
-        adjustedDistanceKm = conservativeStraightKm;
-        distanceText = `${adjustedDistanceKm.toFixed(
-          1
-        )} km (línea recta aprox.)`;
+        const withFactor = straightKm * STRAIGHT_LINE_FACTOR;
+        adjustedDistanceKm = Math.round(withFactor * 10) / 10;
+        distanceText = `${adjustedDistanceKm.toFixed(1)} km (línea recta aprox.)`;
         durationText = `${Math.ceil(adjustedDistanceKm * 3)} min aprox.`;
         console.warn(
           "Usando cálculo de línea recta (Haversine) para distancia de delivery"

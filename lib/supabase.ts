@@ -22,14 +22,19 @@ export const supabase = createSupabaseClient();
 /**
  * Cliente con service_role para uso solo en API routes (server).
  * Bypasea RLS; usar solo para operaciones de admin (ej. eliminar orden).
+ * Singleton: se crea una sola vez por proceso para evitar conexiones redundantes.
  */
+let _supabaseAdmin: SupabaseClient | null = null;
+
 export function getSupabaseAdmin(): SupabaseClient {
+  if (_supabaseAdmin) return _supabaseAdmin;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) {
     throw new Error('Faltan NEXT_PUBLIC_SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY');
   }
-  return createClient(url, serviceKey);
+  _supabaseAdmin = createClient(url, serviceKey);
+  return _supabaseAdmin;
 }
 
 // Tipos de base de datos
@@ -41,6 +46,7 @@ export type Product = {
   image_url: string;
   category: 'burger' | 'veggie' | 'bondiolita' | 'pancho' | 'sides' | 'dessert';
   is_available: boolean;
+  is_featured?: boolean | null;
   promo_price?: number | null;
   promo_active?: boolean | null;
   promo_only_pickup?: boolean | null;

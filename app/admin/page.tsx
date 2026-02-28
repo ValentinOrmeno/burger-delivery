@@ -35,6 +35,7 @@ import {
   User,
   XCircle,
   Timer,
+  Layers,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -60,6 +61,34 @@ const CANCEL_REASONS = [
   "Cliente canceló",
   "Otro",
 ];
+
+// ─── Tipos y labels para Stock ─────────────────────────────────────────────
+type Addon = {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number;
+  category: string;
+  applicable_to: string[] | null;
+  is_available: boolean;
+};
+
+const ADDON_CATEGORY_LABELS: Record<string, string> = {
+  size: "Tamaño",
+  meat: "Carne",
+  topping: "Topping",
+  fries: "Papas",
+  sauce: "Salsa",
+};
+
+const PRODUCT_CATEGORY_LABELS: Record<string, string> = {
+  burger: "Hamburguesa",
+  veggie: "Veggie",
+  bondiolita: "Bondiolita",
+  pancho: "Pancho",
+  sides: "Acompañamiento",
+  dessert: "Postre",
+};
 
 // ─── Helpers WhatsApp ──────────────────────────────────────────────────────
 const normalizePhoneForWhatsApp = (rawPhone: string | null | undefined): string | null => {
@@ -167,8 +196,13 @@ export default function AdminDashboard() {
   const [historialHasta, setHistorialHasta] = useState("");
   const [historialSearch, setHistorialSearch] = useState("");
   const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
-  const [adminTab, setAdminTab] = useState<"orders" | "promos" | "metrics">("orders");
+  const [adminTab, setAdminTab] = useState<"orders" | "promos" | "metrics" | "stock">("orders");
   const [kitchenMode, setKitchenMode] = useState(false);
+
+  // ─── Estado Stock ──────────────────────────────────────────────────────
+  const [addons, setAddons] = useState<Addon[]>([]);
+  const [addonsLoading, setAddonsLoading] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const historialFilters: [label: string, value: string, setter: (v: string) => void][] = [
     ["Desde", historialDesde, setHistorialDesde],
@@ -214,7 +248,8 @@ export default function AdminDashboard() {
 
   const [products, setProducts] = useState<Array<{
     id: string; name: string; category: string; price: number;
-    is_available: boolean; promo_active: boolean | null;
+    is_available: boolean; is_featured: boolean | null;
+    promo_active: boolean | null;
     promo_price: number | null; promo_only_pickup: boolean | null; promo_only_cash: boolean | null;
   }>>([]);
   const [productsLoading, setProductsLoading] = useState(false);
@@ -263,6 +298,46 @@ export default function AdminDashboard() {
   }, []);
 
   useEffect(() => { if (adminTab === "promos") fetchProducts(); }, [adminTab, fetchProducts]);
+
+  const fetchAddons = useCallback(async () => {
+    setAddonsLoading(true);
+    try {
+      const res = await fetch("/api/admin/addons");
+      const data = await res.json().catch(() => []);
+      if (res.ok && Array.isArray(data)) setAddons(data);
+      else toast.error("Error al cargar adicionales");
+    } finally { setAddonsLoading(false); }
+  }, []);
+
+  const toggleProductAvailability = async (productId: string, currentValue: boolean) => {
+    setTogglingId(productId);
+    try {
+      const res = await fetch(`/api/admin/products/${productId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_available: !currentValue }),
+      });
+      if (!res.ok) { toast.error("Error al actualizar"); return; }
+      setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, is_available: !currentValue } : p)));
+      toast.success(!currentValue ? "Producto activado en el menú" : "Producto ocultado del menú");
+    } finally { setTogglingId(null); }
+  };
+
+  const toggleAddonAvailability = async (addonId: string, currentValue: boolean) => {
+    setTogglingId(addonId);
+    try {
+      const res = await fetch(`/api/admin/addons/${addonId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_available: !currentValue }),
+      });
+      if (!res.ok) { toast.error("Error al actualizar"); return; }
+      setAddons((prev) => prev.map((a) => (a.id === addonId ? { ...a, is_available: !currentValue } : a)));
+      toast.success(!currentValue ? "Adicional activado" : "Adicional desactivado");
+    } finally { setTogglingId(null); }
+  };
+
+  useEffect(() => { if (adminTab === "stock") { fetchProducts(); fetchAddons(); } }, [adminTab, fetchProducts, fetchAddons]);
 
   // ─── Sonido ────────────────────────────────────────────────────────────
   const playBeep = useCallback((freq = 800, duration = 0.5, volume = 0.3) => {
@@ -372,7 +447,7 @@ export default function AdminDashboard() {
     } finally { setDeletingOrderId(null); }
   };
 
-  const updateProductPromo = async (productId: string, updates: { promo_active?: boolean; promo_price?: number | null; promo_only_pickup?: boolean; promo_only_cash?: boolean; }) => {
+  const updateProductPromo = async (productId: string, updates: { promo_active?: boolean; promo_price?: number | null; promo_only_pickup?: boolean; promo_only_cash?: boolean; is_featured?: boolean; }) => {
     setSavingProductId(productId);
     try {
       const res = await fetch(`/api/admin/products/${productId}`, {
@@ -564,6 +639,7 @@ export default function AdminDashboard() {
           {[
             { key: "orders",  label: "Órdenes",    icon: <Package className="h-4 w-4" /> },
             { key: "metrics", label: "Métricas",   icon: <TrendingUp className="h-4 w-4" /> },
+            { key: "stock",   label: "Stock",      icon: <Layers className="h-4 w-4" /> },
             { key: "promos",  label: "Promociones", icon: <Tag className="h-4 w-4" /> },
           ].map(({ key, label, icon }) => (
             <Button key={key} variant="ghost" onClick={() => setAdminTab(key as typeof adminTab)}
@@ -577,7 +653,7 @@ export default function AdminDashboard() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-3xl font-black text-white md:text-4xl">
-              {adminTab === "orders" ? "Dashboard Cocina" : adminTab === "metrics" ? "Métricas" : "Promociones"}
+              {adminTab === "orders" ? "Dashboard Cocina" : adminTab === "metrics" ? "Métricas" : adminTab === "stock" ? "Stock y Disponibilidad" : "Promociones"}
             </h1>
             {adminTab === "orders" && (
               <p className="text-zinc-400">
@@ -611,6 +687,11 @@ export default function AdminDashboard() {
                   <RefreshCw className="h-4 w-4" />
                 </Button>
               </>
+            )}
+            {adminTab === "stock" && (
+              <Button variant="outline" onClick={() => { fetchProducts(); fetchAddons(); }} disabled={productsLoading || addonsLoading} className="border-zinc-700">
+                <RefreshCw className={`mr-2 h-4 w-4 ${productsLoading || addonsLoading ? "animate-spin" : ""}`} />Actualizar
+              </Button>
             )}
             {adminTab === "promos" && (
               <Button variant="outline" onClick={fetchProducts} disabled={productsLoading} className="border-zinc-700">
@@ -689,6 +770,170 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {/* ════════════════ TAB: STOCK ════════════════ */}
+        {adminTab === "stock" && (
+          <div className="space-y-6">
+            {/* ── Productos ── */}
+            <Card className="border-zinc-800 bg-zinc-900/50">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-white">Productos del menú</CardTitle>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-zinc-500">
+                      {products.filter((p) => p.is_available).length} de {products.length} activos
+                    </span>
+                    <Button variant="outline" size="sm" onClick={fetchProducts} disabled={productsLoading} className="border-zinc-700">
+                      <RefreshCw className={`h-3.5 w-3.5 ${productsLoading ? "animate-spin" : ""}`} />
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-sm text-zinc-500">
+                  Desactivar un producto lo oculta del menú inmediatamente. Los clientes no lo verán hasta que lo reactives.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {productsLoading && products.length === 0 ? (
+                  <div className="flex justify-center py-8"><RefreshCw className="h-8 w-8 animate-spin text-orange-500" /></div>
+                ) : (
+                  <>
+                    {Object.entries(
+                      products.reduce((acc, p) => {
+                        if (!acc[p.category]) acc[p.category] = [];
+                        acc[p.category].push(p);
+                        return acc;
+                      }, {} as Record<string, typeof products>)
+                    ).map(([category, categoryProducts]) => (
+                      <div key={category} className="mb-6 last:mb-0">
+                        <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">
+                          {PRODUCT_CATEGORY_LABELS[category] ?? category}
+                          <span className="ml-2 font-normal normal-case text-zinc-600">
+                            ({categoryProducts.filter((p) => p.is_available).length}/{categoryProducts.length} activos)
+                          </span>
+                        </h3>
+                        <div className="space-y-2">
+                          {categoryProducts.map((product) => (
+                            <div
+                              key={product.id}
+                              className={`flex items-center justify-between rounded-lg border px-4 py-3 transition-colors ${
+                                product.is_available
+                                  ? "border-zinc-700 bg-zinc-800/50"
+                                  : "border-zinc-800 bg-zinc-900 opacity-60"
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${product.is_available ? "bg-green-500" : "bg-zinc-600"}`} />
+                                <div className="min-w-0">
+                                  <p className={`font-semibold truncate ${product.is_available ? "text-white" : "text-zinc-500 line-through"}`}>
+                                    {product.name}
+                                  </p>
+                                  <p className="text-xs text-zinc-500">{formatPrice(product.price)}</p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => toggleProductAvailability(product.id, product.is_available)}
+                                disabled={togglingId === product.id}
+                                className={`relative ml-4 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
+                                  product.is_available ? "bg-green-500" : "bg-zinc-600"
+                                } ${togglingId === product.id ? "opacity-50 cursor-wait" : "cursor-pointer"}`}
+                                aria-label={product.is_available ? "Desactivar producto" : "Activar producto"}
+                              >
+                                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${product.is_available ? "translate-x-6" : "translate-x-1"}`} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* ── Adicionales ── */}
+            <Card className="border-zinc-800 bg-zinc-900/50">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-white">Adicionales / Extras</CardTitle>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-zinc-500">
+                      {addons.filter((a) => a.is_available).length} de {addons.length} activos
+                    </span>
+                    <Button variant="outline" size="sm" onClick={fetchAddons} disabled={addonsLoading} className="border-zinc-700">
+                      <RefreshCw className={`h-3.5 w-3.5 ${addonsLoading ? "animate-spin" : ""}`} />
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-sm text-zinc-500">
+                  Desactivar un adicional lo quita del personalizador de pedidos inmediatamente.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {addonsLoading && addons.length === 0 ? (
+                  <div className="flex justify-center py-8"><RefreshCw className="h-8 w-8 animate-spin text-orange-500" /></div>
+                ) : (
+                  <>
+                    {Object.entries(
+                      addons.reduce((acc, a) => {
+                        if (!acc[a.category]) acc[a.category] = [];
+                        acc[a.category].push(a);
+                        return acc;
+                      }, {} as Record<string, Addon[]>)
+                    ).map(([category, categoryAddons]) => (
+                      <div key={category} className="mb-6 last:mb-0">
+                        <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">
+                          {ADDON_CATEGORY_LABELS[category] ?? category}
+                          <span className="ml-2 font-normal normal-case text-zinc-600">
+                            ({categoryAddons.filter((a) => a.is_available).length}/{categoryAddons.length} activos)
+                          </span>
+                        </h3>
+                        <div className="space-y-2">
+                          {categoryAddons.map((addon) => (
+                            <div
+                              key={addon.id}
+                              className={`flex items-center justify-between rounded-lg border px-4 py-3 transition-colors ${
+                                addon.is_available
+                                  ? "border-zinc-700 bg-zinc-800/50"
+                                  : "border-zinc-800 bg-zinc-900 opacity-60"
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${addon.is_available ? "bg-green-500" : "bg-zinc-600"}`} />
+                                <div className="min-w-0">
+                                  <p className={`font-semibold truncate ${addon.is_available ? "text-white" : "text-zinc-500 line-through"}`}>
+                                    {addon.name}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-xs text-zinc-500">{formatPrice(addon.price)}</span>
+                                    {addon.applicable_to && addon.applicable_to.length > 0 && (
+                                      <span className="text-xs text-zinc-600">
+                                        · {addon.applicable_to.map((c) => PRODUCT_CATEGORY_LABELS[c] ?? c).join(", ")}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => toggleAddonAvailability(addon.id, addon.is_available)}
+                                disabled={togglingId === addon.id}
+                                className={`relative ml-4 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
+                                  addon.is_available ? "bg-green-500" : "bg-zinc-600"
+                                } ${togglingId === addon.id ? "opacity-50 cursor-wait" : "cursor-pointer"}`}
+                                aria-label={addon.is_available ? "Desactivar adicional" : "Activar adicional"}
+                              >
+                                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${addon.is_available ? "translate-x-6" : "translate-x-1"}`} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* ════════════════ TAB: PROMOS ════════════════ */}
         {adminTab === "promos" && (
           <Card className="border-zinc-800 bg-zinc-900/50">
@@ -697,13 +942,14 @@ export default function AdminDashboard() {
                 <div className="flex justify-center py-12"><RefreshCw className="h-10 w-10 animate-spin text-orange-500" /></div>
               ) : (
                 <div className="space-y-4">
-                  <p className="mb-4 text-sm text-zinc-400">Marcá promo activa y el precio en promoción. Opcional: limitar a &quot;solo efectivo&quot; o &quot;solo retiro en local&quot;.</p>
+                  <p className="mb-4 text-sm text-zinc-400">Marcá promo activa y el precio en promoción. Opcional: limitar a &quot;solo efectivo&quot; o &quot;solo retiro en local&quot;. La columna &quot;Destacado&quot; controla si aparece en la sección &quot;Destacadas de la Casa&quot;.</p>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
                         <tr className="border-b border-zinc-700 text-zinc-400">
                           <th className="pb-2 pr-4 font-medium">Producto</th>
                           <th className="pb-2 pr-4 font-medium">Precio normal</th>
+                          <th className="pb-2 pr-4 font-medium">⭐ Destacado</th>
                           <th className="pb-2 pr-4 font-medium">Promo activa</th>
                           <th className="pb-2 pr-4 font-medium">Precio promo</th>
                           <th className="pb-2 pr-4 font-medium">Solo efectivo</th>
@@ -716,6 +962,12 @@ export default function AdminDashboard() {
                           <tr key={p.id} className="border-b border-zinc-800 align-middle">
                             <td className="py-3 pr-4 font-medium text-white">{p.name}</td>
                             <td className="py-3 pr-4 text-zinc-300">{formatPrice(p.price)}</td>
+                            <td className="py-3 pr-4">
+                              <input type="checkbox" checked={!!p.is_featured}
+                                title="Mostrar en sección Destacadas de la Casa"
+                                onChange={(e) => { const v = e.target.checked; setProducts((prev) => prev.map((x) => x.id === p.id ? { ...x, is_featured: v } : x)); updateProductPromo(p.id, { is_featured: v }); }}
+                                className="h-4 w-4 rounded border-zinc-600 accent-yellow-400" />
+                            </td>
                             <td className="py-3 pr-4">
                               <input type="checkbox" checked={!!p.promo_active}
                                 onChange={(e) => { const v = e.target.checked; setProducts((prev) => prev.map((x) => x.id === p.id ? { ...x, promo_active: v } : x)); updateProductPromo(p.id, { promo_active: v }); }}
@@ -739,7 +991,7 @@ export default function AdminDashboard() {
                             </td>
                             <td className="py-3">
                               <Button size="sm" variant="outline" disabled={savingProductId === p.id}
-                                onClick={() => updateProductPromo(p.id, { promo_active: !!p.promo_active, promo_price: p.promo_price ?? undefined, promo_only_cash: !!p.promo_only_cash, promo_only_pickup: !!p.promo_only_pickup })}
+                                onClick={() => updateProductPromo(p.id, { is_featured: !!p.is_featured, promo_active: !!p.promo_active, promo_price: p.promo_price ?? undefined, promo_only_cash: !!p.promo_only_cash, promo_only_pickup: !!p.promo_only_pickup })}
                                 className="border-zinc-600">
                                 {savingProductId === p.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : "Guardar"}
                               </Button>

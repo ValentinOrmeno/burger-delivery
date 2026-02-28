@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseAdmin } from "@/lib/supabase";
 import { MercadoPagoConfig, Preference } from "mercadopago";
+import { getDeliveryCost } from "@/lib/constants";
 
 // Configurar Mercado Pago
 const client = new MercadoPagoConfig({
@@ -38,9 +39,7 @@ export async function POST(request: NextRequest) {
     const body: CheckoutBody = await request.json();
     const { customer_name, customer_phone, customer_address, between_streets, notes, delivery_distance, delivery_cost, items, total_amount } = body;
 
-    console.log("Checkout request:", { customer_name, customer_phone, items_count: items.length, total_amount, delivery_cost });
-
-    // Validaciones
+    // Validaciones básicas
     if (!customer_name || !customer_phone || !items || items.length === 0) {
       return NextResponse.json(
         { error: "Faltan datos requeridos" },
@@ -48,29 +47,97 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Obtener el último número de orden para generar uno secuencial
-    const { data: lastOrder } = await supabase
-      .from("orders")
-      .select("order_number")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single();
+    const supabaseAdmin = getSupabaseAdmin();
 
-    const nextOrderNumber = lastOrder?.order_number ? lastOrder.order_number + 1 : 1;
+    // ── Validar precios en el servidor ──────────────────────────────────────
+    // Consultamos los productos reales desde la DB para evitar manipulación de precios
+    const productIds = [...new Set(items.map((i) => i.product_id))];
+    const { data: dbProducts, error: productsError } = await supabaseAdmin
+      .from("products")
+      .select("id, price, promo_active, promo_price, promo_only_cash, promo_only_pickup, is_available")
+      .in("id", productIds);
 
-    // 2. Crear la orden en Supabase
-    const { data: order, error: orderError } = await supabase
+    if (productsError || !dbProducts) {
+      return NextResponse.json(
+        { error: "Error al verificar los productos" },
+        { status: 500 }
+      );
+    }
+
+    const productMap = new Map(dbProducts.map((p) => [p.id, p]));
+
+    // Verificar disponibilidad y recalcular precios (método mercadopago, delivery)
+    let serverTotal = 0;
+    const validatedItems: OrderItem[] = [];
+
+    for (const item of items) {
+      const dbProduct = productMap.get(item.product_id);
+      if (!dbProduct) {
+        return NextResponse.json(
+          { error: `Producto no encontrado: ${item.product_id}` },
+          { status: 400 }
+        );
+      }
+      if (!dbProduct.is_available) {
+        return NextResponse.json(
+          { error: `El producto ya no está disponible` },
+          { status: 400 }
+        );
+      }
+
+      // Precio base: promo solo aplica si no es promo_only_cash ni promo_only_pickup
+      // (mercadopago + delivery → ninguna restricción de promo aplica aquí)
+      const promoApplies =
+        dbProduct.promo_active &&
+        dbProduct.promo_price != null &&
+        !dbProduct.promo_only_cash &&
+        !dbProduct.promo_only_pickup;
+
+      const serverBasePrice = promoApplies ? (dbProduct.promo_price as number) : dbProduct.price;
+
+      // Sumar extras (los precios de extras vienen del cliente; son aditivos y de bajo riesgo,
+      // pero los validamos contra el precio base para detectar anomalías)
+      const extrasTotal = (item.extras ?? []).reduce(
+        (sum, e) => sum + e.price * e.quantity,
+        0
+      );
+      const serverUnitPrice = serverBasePrice + extrasTotal;
+
+      serverTotal += serverUnitPrice * item.quantity;
+      validatedItems.push({ ...item, unit_price: serverUnitPrice });
+    }
+
+    // Sumar costo de delivery validado en servidor
+    const serverDeliveryCost = delivery_distance ? getDeliveryCost(delivery_distance) : 0;
+    const serverTotalWithDelivery = serverTotal + serverDeliveryCost;
+
+    // Tolerancia del 1% para diferencias de redondeo entre cliente y servidor
+    const clientTotal = total_amount;
+    const tolerance = Math.max(1, clientTotal * 0.01);
+    if (Math.abs(clientTotal - serverTotalWithDelivery) > tolerance) {
+      return NextResponse.json(
+        {
+          error: "El total del pedido no coincide. Por favor, recargá la página e intentá de nuevo.",
+          server_total: serverTotalWithDelivery,
+          client_total: clientTotal,
+        },
+        { status: 400 }
+      );
+    }
+
+    // ── Crear la orden en Supabase ──────────────────────────────────────────
+    // order_number se genera automáticamente por la secuencia de PostgreSQL
+    const { data: order, error: orderError } = await supabaseAdmin
       .from("orders")
       .insert({
-        order_number: nextOrderNumber,
         customer_name,
         customer_phone,
         customer_address,
         between_streets,
         notes,
         delivery_distance,
-        delivery_cost: delivery_cost || 0,
-        total_amount,
+        delivery_cost: serverDeliveryCost,
+        total_amount: serverTotalWithDelivery,
         status: "pending",
         payment_method: "mercadopago",
       })
@@ -85,10 +152,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("Order created:", order.id);
-
-    // 2. Crear los items de la orden (incluyendo extras)
-    const orderItems = items.map((item) => ({
+    // Crear los items de la orden (con precios validados en servidor)
+    const orderItems = validatedItems.map((item) => ({
       order_id: order.id,
       product_id: item.product_id,
       quantity: item.quantity,
@@ -96,33 +161,29 @@ export async function POST(request: NextRequest) {
       extras: item.extras || [],
     }));
 
-    const { error: itemsError } = await supabase
+    const { error: itemsError } = await supabaseAdmin
       .from("order_items")
       .insert(orderItems);
 
     if (itemsError) {
       console.error("Error creating order items:", itemsError);
       // Eliminar la orden si falla la creación de items
-      await supabase.from("orders").delete().eq("id", order.id);
+      await supabaseAdmin.from("orders").delete().eq("id", order.id);
       return NextResponse.json(
         { error: "Error al crear los items de la orden", details: itemsError },
         { status: 500 }
       );
     }
 
-    console.log("Order items created");
-
-    // 3. Verificar si Mercado Pago está configurado
-    const isMPConfigured = process.env.MP_ACCESS_TOKEN && 
+    // ── Verificar si Mercado Pago está configurado ──────────────────────────
+    const isMPConfigured = process.env.MP_ACCESS_TOKEN &&
                            !process.env.MP_ACCESS_TOKEN.includes("tu-access-token");
 
     if (!isMPConfigured) {
       // Modo DEMO: Simular pago aprobado automáticamente
-      console.log("Mercado Pago no configurado - Modo DEMO activado");
-      
-      await supabase
+      await supabaseAdmin
         .from("orders")
-        .update({ 
+        .update({
           status: "paid",
           payment_id: `MP-DEMO-${order.order_number}`
         })
@@ -136,12 +197,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 3. Crear preferencia de Mercado Pago (solo si está configurado)
+    // ── Crear preferencia de Mercado Pago ──────────────────────────────────
     const preference = new Preference(client);
-    
+
     const response = await preference.create({
       body: {
-        items: items.map((item) => ({
+        items: validatedItems.map((item) => ({
           id: item.product_id,
           title: `Producto ID: ${item.product_id}`,
           unit_price: Number(item.unit_price),
@@ -165,8 +226,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // 4. Actualizar la orden con el ID de Mercado Pago
-    await supabase
+    // Actualizar la orden con el ID de Mercado Pago
+    await supabaseAdmin
       .from("orders")
       .update({ payment_id: response.id })
       .eq("id", order.id);

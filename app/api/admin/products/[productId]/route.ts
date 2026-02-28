@@ -6,6 +6,8 @@ type PromoBody = {
   promo_price?: number | null;
   promo_only_pickup?: boolean;
   promo_only_cash?: boolean;
+  is_featured?: boolean;
+  is_available?: boolean;
 };
 
 export async function PATCH(
@@ -27,10 +29,12 @@ export async function PATCH(
     if (body.promo_price !== undefined) updates.promo_price = body.promo_price;
     if (typeof body.promo_only_pickup === "boolean") updates.promo_only_pickup = body.promo_only_pickup;
     if (typeof body.promo_only_cash === "boolean") updates.promo_only_cash = body.promo_only_cash;
+    if (typeof body.is_featured === "boolean") updates.is_featured = body.is_featured;
+    if (typeof body.is_available === "boolean") updates.is_available = body.is_available;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json(
-        { error: "No hay campos de promo para actualizar" },
+        { error: "No hay campos para actualizar" },
         { status: 400 }
       );
     }

@@ -6,7 +6,7 @@ export async function GET() {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("products")
-      .select("id, name, category, price, is_available, promo_active, promo_price, promo_only_pickup, promo_only_cash")
+      .select("id, name, category, price, is_available, is_featured, promo_active, promo_price, promo_only_pickup, promo_only_cash")
       .order("category")
       .order("name");
 

@@ -32,12 +32,24 @@ type CheckoutBody = {
   delivery_cost?: number;
   items: OrderItem[];
   total_amount: number;
+  order_type?: "delivery" | "pickup";
 };
 
 export async function POST(request: NextRequest) {
   try {
     const body: CheckoutBody = await request.json();
-    const { customer_name, customer_phone, customer_address, between_streets, notes, delivery_distance, delivery_cost, items, total_amount } = body;
+    const {
+      customer_name,
+      customer_phone,
+      customer_address,
+      between_streets,
+      notes,
+      delivery_distance,
+      delivery_cost,
+      items,
+      total_amount,
+      order_type = "delivery",
+    } = body;
 
     // Validaciones básicas
     if (!customer_name || !customer_phone || !items || items.length === 0) {
@@ -85,13 +97,12 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Precio base: promo solo aplica si no es promo_only_cash ni promo_only_pickup
-      // (mercadopago + delivery → ninguna restricción de promo aplica aquí)
+      // Precio base: promo aplica para MP si no es solo efectivo y (para pickup no es solo delivery)
       const promoApplies =
         dbProduct.promo_active &&
         dbProduct.promo_price != null &&
         !dbProduct.promo_only_cash &&
-        !dbProduct.promo_only_pickup;
+        (order_type === "delivery" ? !dbProduct.promo_only_pickup : true);
 
       const serverBasePrice = promoApplies ? (dbProduct.promo_price as number) : dbProduct.price;
 
@@ -107,8 +118,9 @@ export async function POST(request: NextRequest) {
       validatedItems.push({ ...item, unit_price: serverUnitPrice });
     }
 
-    // Sumar costo de delivery validado en servidor
-    const serverDeliveryCost = delivery_distance ? getDeliveryCost(delivery_distance) : 0;
+    // Costo de delivery: 0 si es retiro en local
+    const serverDeliveryCost =
+      order_type === "pickup" ? 0 : (delivery_distance ? getDeliveryCost(delivery_distance) : 0);
     const serverTotalWithDelivery = serverTotal + serverDeliveryCost;
 
     // Tolerancia del 1% para diferencias de redondeo entre cliente y servidor
@@ -132,14 +144,15 @@ export async function POST(request: NextRequest) {
       .insert({
         customer_name,
         customer_phone,
-        customer_address,
-        between_streets,
-        notes,
-        delivery_distance,
+        customer_address: order_type === "delivery" ? customer_address ?? null : null,
+        between_streets: order_type === "delivery" ? between_streets ?? null : null,
+        notes: notes ?? null,
+        delivery_distance: order_type === "delivery" ? delivery_distance ?? null : null,
         delivery_cost: serverDeliveryCost,
         total_amount: serverTotalWithDelivery,
         status: "pending",
         payment_method: "mercadopago",
+        order_type,
       })
       .select()
       .single();
